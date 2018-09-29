@@ -1,16 +1,51 @@
-plugins {
-    id 'java'
+buildscript {
+
+    ext {
+        springBootVersion = '1.5.2.RELEASE'
+        jackson_version = '2.8.1'
+    }
+
+    repositories {
+        mavenCentral()
+        jcenter()
+        maven { url "https://plugins.gradle.org/m2/" }
+    }
+    dependencies {
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+    }
 }
 
 group 'open.data.lv'
 version '1.0-SNAPSHOT'
 
+apply plugin: 'java'
+apply plugin: 'org.springframework.boot'
+
 sourceCompatibility = 1.8
+
+configurations.all {
+    exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+}
 
 repositories {
     mavenCentral()
+    jcenter()
+    maven { url "https://repo.spring.io/release/" }
+    maven { url "http://repo.spring.io/libs-snapshot-local" }
+    maven { url "http://repo.spring.io/libs-milestone-local" }
+    maven { url "http://repo.spring.io/libs-release-local" }
 }
 
 dependencies {
-    testCompile group: 'junit', name: 'junit', version: '4.12'
+    compile("org.springframework.boot:spring-boot-starter-web")
+    compile("org.springframework.boot:spring-boot-starter-security")
+    compile("org.springframework.security.oauth:spring-security-oauth2")
+    compile("org.springframework.boot:spring-boot-starter-data-jpa")
+    compile("org.springframework.boot:spring-boot-starter-batch")
+    compile("org.hibernate:hibernate-core:5.0.11.Final")
+    compile("org.hibernate:hibernate-entitymanager:5.0.11.Final")
+    compile group: 'com.h2database', name: 'h2', version: '1.4.196'
+    compileOnly ("org.projectlombok:lombok:1.16.16")
+    testCompile group: 'com.h2database', name: 'h2', version: '1.4.196'
+    testCompile("org.springframework.boot:spring-boot-starter-test")
 }
