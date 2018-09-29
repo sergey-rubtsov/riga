@@ -2,6 +2,7 @@ package open.data.lv.model;
 
 import javax.persistence.*;
 import java.util.Date;
+import java.util.Objects;
 
 @Entity
 public class Trip {
@@ -10,13 +11,14 @@ public class Trip {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "transport_id")
-    private Transport transport;
+    @Column
+    private String uuid;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "person_id")
-    private Person person;
+    @Column
+    private String route;
+
+    @Column
+    private String ticket;
 
     @Column
     private Date start;
@@ -39,21 +41,27 @@ public class Trip {
     public Trip() {
     }
 
-    public Trip(Transport transport, Person person, Date start) {
-        this.transport = transport;
-        this.person = person;
+    public Trip(String uuid, String route, String ticket, Date start) {
+        this.uuid = uuid;
+        this.route = route;
+        this.ticket = ticket;
         this.start = start;
     }
 
-    public Trip(Transport transport, Person person, Date start, double x0, double y0, Date end, double x1, double y1) {
-        this.transport = transport;
-        this.person = person;
-        this.start = start;
-        this.x0 = x0;
-        this.y0 = y0;
-        this.end = end;
-        this.x1 = x1;
-        this.y1 = y1;
+    public String getUuid() {
+        return uuid;
+    }
+
+    public void setUuid(String uuid) {
+        this.uuid = uuid;
+    }
+
+    public String getRoute() {
+        return route;
+    }
+
+    public void setRoute(String route) {
+        this.route = route;
     }
 
     public Long getId() {
@@ -64,20 +72,12 @@ public class Trip {
         this.id = id;
     }
 
-    public Transport getTransport() {
-        return transport;
+    public String getTicket() {
+        return ticket;
     }
 
-    public void setTransport(Transport transport) {
-        this.transport = transport;
-    }
-
-    public Person getPerson() {
-        return person;
-    }
-
-    public void setPerson(Person person) {
-        this.person = person;
+    public void setTicket(String ticket) {
+        this.ticket = ticket;
     }
 
     public double getX0() {
@@ -126,5 +126,27 @@ public class Trip {
 
     public void setEnd(Date end) {
         this.end = end;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Trip trip = (Trip) o;
+        return Double.compare(trip.x0, x0) == 0 &&
+                Double.compare(trip.y0, y0) == 0 &&
+                Double.compare(trip.x1, x1) == 0 &&
+                Double.compare(trip.y1, y1) == 0 &&
+                Objects.equals(id, trip.id) &&
+                Objects.equals(uuid, trip.uuid) &&
+                Objects.equals(route, trip.route) &&
+                Objects.equals(ticket, trip.ticket) &&
+                Objects.equals(start, trip.start) &&
+                Objects.equals(end, trip.end);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, uuid, route, ticket, start, x0, y0, end, x1, y1);
     }
 }
