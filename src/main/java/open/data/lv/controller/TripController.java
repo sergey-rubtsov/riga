@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -21,19 +22,21 @@ public class TripController {
     private TripTranslator tripTranslator;
 
     @RequestMapping("/trips")
-    public List<TripMessage> getTrips(@RequestParam("time") String time,
+    public List<TripMessage> getTrips(@RequestParam("time") LocalDateTime begin,
                                       @RequestParam("route") String route) {
-        return tripTranslator.translate(tripService.getTrips(time, route));
-    }
-
-    @RequestMapping("/test")
-    public List<TripMessage> getTrips() {
-        return tripTranslator.translate(tripService.getTrips("16.05.2018 10:00:00", "A 10"));
+        //return tripTranslator.translate(tripService.getTripsDuringHour(begin, route));
+        return null;
     }
 
     @RequestMapping("/job")
-    public void process() {
-        tripService.processTrips("16.05.2018 10:00:00");
+    public void process(@RequestParam("time") LocalDateTime begin) {
+        tripService.processTripsDuringHour(begin);
     }
+
+/*    @RequestMapping("/test")
+    public List<TripMessage> getTrips() {
+        return tripTranslator.translate(tripService.getTripsDuringHour("16.05.2018 10:00:00", "A 10"));
+    }
+*/
 
 }

@@ -10,13 +10,14 @@ import java.util.stream.Collectors;
 @Component
 public class TripTranslator {
 
-    public List<TripMessage> translate(List<Trip> trips) {
-        return trips.stream().map(el ->
+    public List<TripMessage> translate(List<Trip> validations) {
+        return null;
+/*        return validations.stream().map(el ->
                 new TripMessage(el.getStart(),
                         el.getX0(),
                         el.getY0(),
                         el.getX1(),
                         el.getY1()))
-                .collect(Collectors.toList());
+                .collect(Collectors.toList());*/
     }
 }

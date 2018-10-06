@@ -1,4 +1,4 @@
-package open.data.lv;
+package open.data.lv.infrastructure;
 
 import org.springframework.boot.autoconfigure.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
