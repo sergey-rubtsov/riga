@@ -1,0 +1,104 @@
+﻿route_id,route_short_name,route_long_name
+riga_bus_5T,5T,Iļģuciems - Stacijas laukums
+riga_bus_1,1,Abrenes iela - Berģuciems
+riga_bus_2,2,Abrenes iela - Vecmīlgrāvis
+riga_bus_3,3,Daugavgrīva - Pļavnieki
+riga_bus_4,4,Abrenes iela - Piņķi
+riga_bus_4z,4z,Abrenes iela - Zolitūde
+riga_bus_5,5,Abrenes iela - Mežciems
+riga_bus_6,6,Abrenes iela  - Dreiliņi
+riga_bus_7,7,Abrenes iela - Stīpnieki
+riga_bus_8,8,Stacijas laukums - Zolitūde
+riga_bus_9,9,Abrenes iela - Mežaparks
+riga_bus_10,10,Abrenes iela - Brūkleņu iela - Jaunmārupe
+riga_bus_11,11,Abrenes iela - Jaunciems - Suži
+riga_bus_12,12,"Abrenes iela - Kooperatīvs ""Ziedonis"""
+riga_bus_13,13,Babītes stacija - Kleisti - Preču 2
+riga_bus_14,14,Abrenes iela - Zvēraudzētava
+riga_bus_15,15,Dārziņi - Jugla
+riga_bus_16,16,"Abrenes iela - Papīrfabrika ""Jugla"""
+riga_bus_18,18,Abrenes iela - Dārziņi
+riga_bus_19,19,Mežciems - Bukulti - Sarkandaugava
+riga_bus_20,20,Pētersalas iela - Pļavnieku kapi
+riga_bus_21,21,Imanta - Jugla
+riga_bus_22,22,Abrenes iela - Lidosta
+riga_bus_23,23,Abrenes iela - Baloži
+riga_bus_24,24,Abrenes iela - Mangaļsala
+riga_bus_25,25,Abrenes iela - Mārupe
+riga_bus_26,26,Abrenes iela - Katlakalns
+riga_bus_28,28,Jugla - Langstiņi
+riga_bus_29,29,Mežciems - Vecmīlgrāvis - Vecāķi
+riga_bus_30,30,Centrālā stacija - Daugavgrīva
+riga_bus_31,31,Dārziņi - Jugla
+riga_bus_32,32,Abrenes iela - Piņķi
+riga_bus_34,34,Centrāltirgus - Saulīši
+riga_bus_35,35,Abrenes iela - Pleskodāle
+riga_bus_36,36,Imanta  - Vakarbuļļi
+riga_bus_37,37,Esplanāde - Imanta
+riga_bus_38,38,Abrenes iela - Dzirciema iela
+riga_bus_39,39,Abrenes iela - Lāčupes kapi
+riga_bus_40,40,Jugla - Ziepniekkalns
+riga_bus_41,41,Esplanāde - Imanta
+riga_bus_43,43,Abrenes iela - Skulte
+riga_bus_44,44,Ziepniekkalns - Zolitūde
+riga_bus_46,46,Ziepniekkalns - Zolitūde
+riga_bus_47,47,Abrenes iela - Šķirotava
+riga_bus_48,48,Pļavnieku  kapi - Sarkandaugava
+riga_bus_49,49,MAN TESS - Rumbula
+riga_bus_50,50,Abrenes iela - TEC 2
+riga_bus_51,51,Abrenes iela - Ulbroka
+riga_bus_52,52,Abrenes iela - Pļavnieku kapi
+riga_bus_53,53,Esplanāde - Zolitūde
+riga_bus_54,54,Abrenes iela - Voleri
+riga_bus_55,55,Abrenes iela - Jaunmārupe
+riga_bus_56,56,Daugavgrīva - Ziepniekkalns
+riga_bus_57,57,Abrenes iela - Ķīpsala
+riga_bus_58,58,Purvciems - Vecmīlgrāvis - Vecāķi
+riga_bus_59,59,Latvijas Universitāte - Televīzijas centrs
+riga_bus_60,60,Ķengarags - Ziepniekkalns
+riga_tram_RETRO,RETRO,Ausekļa iela - Mežaparks
+riga_tram_1,1,Imanta - Jugla
+riga_tram_2,2,Centrāltirgus - Tapešu iela
+riga_tram_3,3,Jugla - Ķengarags
+riga_tram_5,5,Stacijas laukums - Mīlgrāvis
+riga_tram_7,7,Ausekļa iela - Ķengarags
+riga_tram_9,9,Aldaris - Ķengarags
+riga_tram_10,10,Centrāltirgus - Bišumuiža
+riga_tram_11,11,Ausekļa iela - Mežaparks
+riga_trol_1,1,Valmieras iela - Pētersalas iela
+riga_trol_3,3,Centrāltirgus - Sarkandaugava
+riga_trol_5,5,Daugavas stadions - Paula Stradiņa slimnīca
+riga_trol_9,9,Stacijas laukums - Iļģuciems
+riga_trol_11,11,Centrālā stacija - Ieriķu iela
+riga_trol_12,12,Āgenskalna priedes - Šmerlis
+riga_trol_13,13,Centrāltirgus - Ieriķu iela
+riga_trol_14,14,Esplanāde - Mežciems
+riga_trol_15,15,Latvijas Universitāte - Ķengarags
+riga_trol_16,16,Pļavnieki - Šmerlis
+riga_trol_17,17,Centrālā stacija - Purvciems
+riga_trol_18,18,Centrālā stacija - Mežciems
+riga_trol_19,19,Pētersalas iela - Ziepniekkalns
+riga_trol_22,22,Centrālā stacija - Pļavnieki
+riga_trol_23,23,Centrālā stacija - Purvciems
+riga_trol_25,25,Brīvības iela - Iļģuciems
+riga_trol_27,27,Stacijas laukums - Ziepniekkalns
+riga_minibus_203,203,Jugla - Pļavnieki
+riga_minibus_204,204,Centrs - Jugla
+riga_minibus_206,206,Autoosta - Mežciems
+riga_minibus_209,209,Purvciems - Rumbula
+riga_minibus_214,214,Centrālā stacija- Dreiliņi
+riga_minibus_224,224,Stacijas laukums - Mangaļsala
+riga_minibus_233,233,Centrs - Ziepniekkalns
+riga_minibus_237,237,Esplanāde - Imanta
+riga_minibus_241,241,Centrs - Lidosta
+riga_minibus_244,244,Centrālā stacija - Iļģuciems
+riga_minibus_246,246,Daugavgrīva - Pļavnieki
+riga_minibus_246a,246a,Centrs - Daugavgrīva
+riga_minibus_263,263,Mežciems - Šampēteris
+riga_minibus_271,271,"P. Stradiņa slimnīca - Slimnīca ""Gaiļezers"""
+riga_minibus_300,300,Stacijas laukums - Vecdaugava
+riga_minibus_316,316,Centrs - Ķengarags
+riga_minibus_322,322,Centrālā stacija - Lidosta
+riga_minibus_336,336,Baznīcas iela - Zolitūde
+riga_minibus_338,338,Imanta - Pļavnieki
+riga_minibus_370,370,Imanta - Pļavnieki
