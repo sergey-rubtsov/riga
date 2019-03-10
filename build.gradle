@@ -44,6 +44,14 @@ dependencies {
     compile("org.springframework.boot:spring-boot-starter-batch")
     compile("org.hibernate:hibernate-core:5.0.11.Final")
     compile("org.hibernate:hibernate-entitymanager:5.0.11.Final")
+
+    compile (group: 'org.apache.spark', name: 'spark-core_2.11', version: '2.3.3') {
+        exclude group: 'com.fasterxml.jackson.module'
+    }
+    compile (group: 'org.apache.spark', name: 'spark-sql_2.11', version: '2.3.3') {
+        exclude group: 'com.fasterxml.jackson.core'
+    }
+    compile group: 'org.codehaus.janino', name: 'janino', version: '3.0.8'
     compile group: 'com.h2database', name: 'h2', version: '1.4.196'
     compileOnly ("org.projectlombok:lombok:1.16.16")
     testCompile group: 'com.h2database', name: 'h2', version: '1.4.196'
