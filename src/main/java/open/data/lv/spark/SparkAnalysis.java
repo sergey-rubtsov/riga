@@ -12,13 +12,21 @@ import org.apache.log4j.Logger;
 import org.apache.log4j.Level;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.Metadata;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
+import scala.collection.immutable.HashSet;
 
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 //'inner', 'outer', 'full', 'fullouter', 'full_outer', 'leftouter', 'left', 'left_outer', 'rightouter', 'right', 'right_outer', 'leftsemi', 'left_semi', 'leftanti', 'left_anti', 'cross'.
 public class SparkAnalysis {
@@ -49,6 +57,9 @@ public class SparkAnalysis {
         Logger.getLogger("org").setLevel(Level.OFF);
         Logger.getLogger("akka").setLevel(Level.OFF);*/
         SQLContext sqlContext = new SQLContext(spark);
+        sqlContext.setConf("spark.sql.caseSensitive", "true");
+        //Dataset<Row> df1Map = df1.select(functions.concat(df1.col("beginTime"), df1.col("endTime")));
+        //df1Map.show();
         readDataAndCreateViews(sqlContext);
         //analyzeData(sqlContext);
         processData(sqlContext);
@@ -106,23 +117,68 @@ public class SparkAnalysis {
         vehiclesOnRoute.createOrReplaceTempView("vehicles_on_route");
         long events = vehiclesOnRoute.agg(sum(col("events"))).first().getLong(0);
         System.out.println("Number of events: " + events);
+        StructType s1 = validationEvents.schema();
+        for(StructField e : s1.fields()) {
+            if (!Arrays.asList(transportEvents.schema().fieldNames()).contains(e)) {
+                transportEvents = transportEvents
+                        .withColumn(e.name(),
+                                lit(null));
+            }
+        }
+        StructType s0 = transportEvents.schema();
+        for(StructField e : s0.fields()) {
+            if (!Arrays.asList(validationEvents.schema().fieldNames()).contains(e)) {
+                validationEvents = validationEvents
+                        .withColumn(e.name(),
+                                lit(null));
+            }
+        }
+        for(StructField e : s1.fields()) {
+            transportEvents = transportEvents.withColumn(e.name(),
+                  transportEvents.col(e.name()).cast(e.dataType().typeName()));
+
+
+        }
+        for(StructField e : s0.fields()) {
+            validationEvents = validationEvents.withColumn(e.name(),
+                    validationEvents.col(e.name()).cast(e.dataType()));
+        }
+
+        //StructType s3 = new StructType(Stream.of(s0.fields(), s1.fields()).flatMap(Stream::of).toArray(StructField[]::new));
+        //List<Row> rows = new ArrayList<>();
+        //Dataset<Row> df = sqlContext.sparkSession().createDataFrame(rows, s1);
+        transportEvents = transportEvents.union(validationEvents);
+        transportEvents.createOrReplaceTempView("transport_events");
+
         Dataset<Row> transportEventsBetweenFirstAndLastValidation =
-                sqlContext.sql("SELECT DISTINCT * FROM transport_events INNER JOIN vehicles_on_route ON " +
+                sqlContext.sql("SELECT DISTINCT * FROM transport_events LEFT JOIN vehicles_on_route ON " +
                         "vehicles_on_route.VehicleID=transport_events.VehicleID WHERE SentDate <= last_time AND SentDate >= first_time");
-        transportEventsBetweenFirstAndLastValidation.createOrReplaceTempView("transport_events");
-        Dataset<Row> consolidated = sqlContext.sql("SELECT " +
-                "TMarsruts, Virziens, ValidTalonaId, time, SentDate, Code, WGS84Fi, WGS84La " +
-                "FROM validation_events " +
-                "FULL OUTER JOIN transport_events ON transport_events.GarNr=validation_events.GarNr")
+        transportEventsBetweenFirstAndLastValidation = transportEventsBetweenFirstAndLastValidation
                 .withColumn("timestamp", coalesce(col("time"), col("SentDate")))
                 .drop("time", "SentDate");
-        consolidated.createOrReplaceTempView("consolidated_events");
-        consolidated = sqlContext.sql("SELECT * FROM consolidated_events " +
-                "ORDER BY timestamp");
-        consolidated.createOrReplaceTempView("consolidated_events");
+        transportEventsBetweenFirstAndLastValidation = transportEventsBetweenFirstAndLastValidation
+                .sort(transportEventsBetweenFirstAndLastValidation.col("timestamp"));
+        transportEventsBetweenFirstAndLastValidation.createOrReplaceTempView("transport_events");
+        //StructType st3 = new StructType(new StructField[] {new StructField("name", DataTypes.StringType, true, null), new StructField("age", DataTypes.IntegerType, true, null)});
+        //StructType validationSchema = new StructType(validationEvents.schema().fields());
 
-        //consolidated.show(1000);
-        consolidated.coalesce(1).write()
+        //df.union(transportEventsBetweenFirstAndLastValidation);
+        //df.union(validationEvents);
+        transportEventsBetweenFirstAndLastValidation.printSchema();
+        transportEventsBetweenFirstAndLastValidation.show(100);
+//        Dataset<Row> consolidated = sqlContext.sql("SELECT " +
+//                "TMarsruts, Virziens, ValidTalonaId, time, SentDate, Code, WGS84Fi, WGS84La " +
+//                "FROM validation_events " +
+//                "FULL OUTER JOIN transport_events ON transport_events.GarNr=validation_events.GarNr")
+//                .withColumn("timestamp", coalesce(col("time"), col("SentDate")))
+//                .drop("time", "SentDate");
+//        consolidated.createOrReplaceTempView("consolidated_events");
+//        consolidated = sqlContext.sql("SELECT * FROM consolidated_events " +
+//                "ORDER BY timestamp");
+//        consolidated.createOrReplaceTempView("consolidated_events");
+//
+//        //consolidated.show(1000);
+        transportEventsBetweenFirstAndLastValidation.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + UUID.randomUUID());
     }
 
