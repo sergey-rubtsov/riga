@@ -86,9 +86,9 @@ public class SparkAnalysis {
         transportEvents.createOrReplaceTempView("transport_events");
         Dataset<Row> validationEvents = sqlContext
                 .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
-        validationEvents = validationEvents
-                .filter(validationEvents.col("TMarsruts")
-                        .eqNullSafe("Tr 101"));
+//        validationEvents = validationEvents
+//                .filter(validationEvents.col("TMarsruts")
+//                        .eqNullSafe("A 40"));
         UserDefinedFunction garageNumber = udf(
                 (Integer i) -> {
                     while (i > 9999) {
@@ -215,7 +215,7 @@ public class SparkAnalysis {
                 .option("delimiter", ";")
                 .option("dateFormat","yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d1.csv").getPath());
-        routes.union(sqlContext.read()
+        routes = routes.union(sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("delimiter", ";")
