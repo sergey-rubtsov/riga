@@ -28,6 +28,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * SELECT latitude, longitude, SQRT(
+ *     POW(69.1 * (latitude - [startlat]), 2) +
+ *     POW(69.1 * ([startlng] - longitude) * COS(latitude / 57.3), 2)) AS distance
+ * FROM TableName HAVING distance < 25 ORDER BY distance;
+ */
 public class SparkAnalysis {
 
     public static void main(String[] args) {
@@ -55,25 +61,72 @@ public class SparkAnalysis {
         Logger.getLogger("akka").setLevel(Level.OFF);*/
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
-        readDataAndCreateViews(sqlContext);
-        //analyzeData(sqlContext);
-        processData(sqlContext);
+        readEventsDataAndCreateViews(sqlContext);
+        readGTFSDataAndCreateViews(sqlContext);
+        processGTFSData(sqlContext);
+        processEventsData(sqlContext);
     }
 
-    private static void analyzeData(SQLContext sqlContext) {
-        //sqlContext.sql("SELECT COUNT(ValidTalonaId) FROM tickets GROUP BY ValidTalonaId").show(1000);
-        System.out.println("Number of unique passengers");
-        //sqlContext.sql("SELECT COUNT(ValidTalonaId), GarNr FROM tickets GROUP BY GarNr").show(1000);
-        System.out.println("Number of passengers for each Garage Number");
-        //sqlContext.sql("SELECT TMarsruts, GarNr FROM tickets GROUP BY TMarsruts, GarNr ORDER BY TMarsruts").show(1000);
-        System.out.println("Routes for each Garage Number");
-        Dataset<Row> dataset0 = sqlContext.sql("SELECT GarNr, TMarsruts FROM tickets GROUP BY TMarsruts, GarNr ORDER BY GarNr");
-        dataset0.show(100);
-        Dataset<Row> dataset1 = sqlContext.sql("SELECT * FROM SELECT GarNr, TMarsruts FROM tickets GROUP BY GarNr, TMarsruts ORDER BY GarNr");
-        dataset1.show(100);
+    private static void readGTFSDataAndCreateViews(SQLContext sqlContext) {
+        ClassLoader classLoader = SparkAnalysis.class.getClassLoader();
+        Dataset<Row> routes = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("delimiter", ",")
+                .option("dateFormat","HH:mm:ss")
+                .csv(classLoader.getResource("real/GTFS/routes.txt").getPath());
+        routes.createOrReplaceTempView("gtfs_routes");
+        Dataset<Row> stop_times = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("delimiter", ",")
+                .option("dateFormat","HH:mm:ss")
+                .csv(classLoader.getResource("real/GTFS/stop_times.txt").getPath());
+        stop_times.createOrReplaceTempView("stop_times");
+        Dataset<Row> stops = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("delimiter", ",")
+                .option("dateFormat","HH:mm:ss")
+                .csv(classLoader.getResource("real/GTFS/stops.txt").getPath());
+        stops.createOrReplaceTempView("stops");
+        Dataset<Row> trips = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("delimiter", ",")
+                .option("dateFormat","HH:mm:ss")
+                .csv(classLoader.getResource("real/GTFS/trips.txt").getPath());
+        trips.createOrReplaceTempView("trips");
+        Dataset<Row> type = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("delimiter", ",")
+                .csv(classLoader.getResource("real/GTFS/route_types.txt").getPath());
+        type.createOrReplaceTempView("route_types");
     }
 
-    private static void processData(SQLContext sqlContext) {
+
+    /**
+     * +--------------------+--------+--------+-------+------------+--------------+
+     * |           stop_name|stop_lat|stop_lon|trip_id|arrival_time|departure_time| route_id
+     * +--------------------+--------+--------+-------+------------+--------------+
+     * |        Abrenes iela|56.94606|24.13001|      1|    06:41:00|      06:45:00|
+     * |        Merķeļa iela|56.94945|24.11884|      1|    06:48:00|      06:48:00|
+     * |       Tērbatas iela|56.95303|24.11615|      1|    06:51:00|      06:51:00|
+     */
+    private static void processGTFSData(SQLContext sqlContext) {
+        Dataset<Row> schedule = sqlContext
+                .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, " +
+                        "trips.route_id, stop_name, stop_lat, stop_lon, arrival_time, departure_time FROM stop_times " +
+                        "INNER JOIN stops ON stop_times.stop_id=stops.stop_id " +
+                        "INNER JOIN trips on stop_times.trip_id=trips.trip_id " +
+                        "INNER JOIN gtfs_routes on gtfs_routes.route_id=trips.route_id " +
+                        "INNER JOIN route_types ON route_types.route_type=gtfs_routes.route_type");
+        schedule.show(500);
+        schedule.createOrReplaceTempView("schedule");
+    }
+
+    private static void processEventsData(SQLContext sqlContext) {
         //Gyro, Speed
         Dataset<Row> transportEvents = sqlContext
                 .sql("SELECT SentDate, VehicleID, event_type.Code, " +
@@ -86,9 +139,6 @@ public class SparkAnalysis {
         transportEvents.createOrReplaceTempView("transport_events");
         Dataset<Row> validationEvents = sqlContext
                 .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
-//        validationEvents = validationEvents
-//                .filter(validationEvents.col("TMarsruts")
-//                        .eqNullSafe("A 40"));
         UserDefinedFunction garageNumber = udf(
                 (Integer i) -> {
                     while (i > 9999) {
@@ -190,17 +240,26 @@ public class SparkAnalysis {
                 .drop("timestamp_of_transport_event");
         consolidated.createOrReplaceTempView("transport_events");
         String dir = UUID.randomUUID().toString();
-
         Dataset<Row> result = sqlContext
-                .sql("SELECT VehicleID, GarNr, route, Virziens, Code, hypothetical_fi, hypothetical_la, " +
-                        "Odometer, Delay, ShiftID, TripID, ValidTalonaId, timestamp, time_between_validation_and_transport_event " +
-                        "FROM transport_events WHERE event_source='passenger' ORDER BY GarNr, timestamp");
-
+                .sql("SELECT VehicleID, GarNr, schedule.route, stop_name, " +
+                        "stop_lat, stop_lon, hypothetical_fi, hypothetical_la, " +
+                        "MIN(" +
+                        "" +
+                        "SQRT( " +
+                            "(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2)) " +
+                        "" +
+                        ")) AS distance, " +
+                        "Virziens, Delay, ValidTalonaId, timestamp, time_between_validation_and_transport_event " +
+                        "FROM transport_events " +
+                        "INNER JOIN schedule ON schedule.route=transport_events.route " +
+                        "WHERE event_source='passenger' " +
+                        "GROUP BY distance " +
+                        "ORDER BY GarNr, timestamp");
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
     }
 
-    private static void readDataAndCreateViews(SQLContext sqlContext) {
+    private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
         ClassLoader classLoader = SparkAnalysis.class.getClassLoader();
         String valFile = "real/ValidDati23_11_18.txt";
         Dataset<Row> tickets = sqlContext.read()
@@ -212,12 +271,14 @@ public class SparkAnalysis {
         Dataset<Row> routes = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
+                .option("nullValue","NULL")
                 .option("delimiter", ";")
                 .option("dateFormat","yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d1.csv").getPath());
         routes = routes.union(sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
+                .option("nullValue","NULL")
                 .option("delimiter", ";")
                 .option("dateFormat","yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d2.csv").getPath()));
