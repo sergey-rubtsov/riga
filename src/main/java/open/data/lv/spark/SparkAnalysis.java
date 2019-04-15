@@ -263,22 +263,22 @@ public class SparkAnalysis {
                         "time_between_validation_and_transport_event " +
                         "FROM transport_events " +
                         "INNER JOIN schedule ON schedule.route=transport_events.route");
-        Dataset<Row> result = consolidated.groupBy(
-                col("route"),
-                col("GarNr"),
-                col("ValidTalonaId"),
-                col("timestamp"),
-                col("time_between_validation_and_transport_event"),
-                col("hypothetical_fi"),
-                col("hypothetical_la"))
-                .agg(
-                        first(col("stop_name").as("stop_name")),
-                        first(col("stop_lat").as("stop_lat")),
-                        first(col("stop_lon").as("stop_lon")),
-                        min(col("distance")).as("distance"))
-                .orderBy(
-                        col("GarNr"),
-                        col("timestamp"));
+        Seq<String> minimalDistanceColumn =  new Set.Set1<>("distance").toSeq();
+        Dataset<Row> result = consolidated.join(consolidated.as("minimal").groupBy(
+                col("route").as("m_route"),
+                col("GarNr").as("GN"),
+                col("ValidTalonaId").as("VTI")
+                //col("timestamp"),
+                //col("time_between_validation_and_transport_event"),
+                //col("hypothetical_fi"),
+                //col("hypothetical_la"),
+                //col("stop_name"),
+                //col("stop_lat"),
+                //col("stop_lon")
+                ).agg(min(col("distance")).as("distance")), minimalDistanceColumn, "inner");
+                //.orderBy(
+                        //col("GarNr"),
+                        //col("timestamp"));
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
