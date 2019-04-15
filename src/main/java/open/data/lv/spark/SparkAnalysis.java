@@ -105,24 +105,31 @@ public class SparkAnalysis {
         type.createOrReplaceTempView("route_types");
     }
 
-
     /**
-     * +--------------------+--------+--------+-------+------------+--------------+
-     * |           stop_name|stop_lat|stop_lon|trip_id|arrival_time|departure_time| route_id
-     * +--------------------+--------+--------+-------+------------+--------------+
-     * |        Abrenes iela|56.94606|24.13001|      1|    06:41:00|      06:45:00|
-     * |        Merķeļa iela|56.94945|24.11884|      1|    06:48:00|      06:48:00|
-     * |       Tērbatas iela|56.95303|24.11615|      1|    06:51:00|      06:51:00|
+     +-----+--------------------+--------+--------+
+     |route|           stop_name|stop_lat|stop_lon|
+     +-----+--------------------+--------+--------+
+     |  A 1|        Abrenes iela|56.94606|24.13001|
+     |  A 1|        Merķeļa iela|56.94945|24.11884|
+     |  A 1|       Tērbatas iela|56.95303|24.11615|
      */
     private static void processGTFSData(SQLContext sqlContext) {
         Dataset<Row> schedule = sqlContext
-                .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, " +
+                .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, direction_id, " +
                         "trips.route_id, stop_name, stop_lat, stop_lon, arrival_time, departure_time FROM stop_times " +
                         "INNER JOIN stops ON stop_times.stop_id=stops.stop_id " +
                         "INNER JOIN trips on stop_times.trip_id=trips.trip_id " +
                         "INNER JOIN gtfs_routes on gtfs_routes.route_id=trips.route_id " +
                         "INNER JOIN route_types ON route_types.route_type=gtfs_routes.route_type");
-        schedule.show(500);
+        //we use only one direction
+        schedule = schedule.filter(col("direction_id").eqNullSafe(0));
+        schedule = schedule.groupBy(col("route"),
+                col("stop_name"),
+                col("stop_lat"),
+                col("stop_lon")).agg(min(col("arrival_time")).as("arrival_time"))
+                .orderBy(
+                        col("route"),
+                        col("arrival_time")).drop(col("arrival_time"));
         schedule.createOrReplaceTempView("schedule");
     }
 
@@ -130,12 +137,12 @@ public class SparkAnalysis {
         //Gyro, Speed
         Dataset<Row> transportEvents = sqlContext
                 .sql("SELECT SentDate, VehicleID, event_type.Code, " +
-                "WGS84Fi, WGS84La, Odometer, Delay, ShiftID, TripID FROM routes " +
-                "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason");
+                        "WGS84Fi, WGS84La, Odometer, Delay, ShiftID, TripID FROM routes " +
+                        "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason");
         transportEvents = transportEvents
                 .filter(transportEvents.col("Code").equalTo("DoorsOpen"));
-                        //.or(transportEvents.col("Code").equalTo("DoorsClosed")));
-                //.or(transportEvents.col("Code").equalTo("Periodical")));
+        //.or(transportEvents.col("Code").equalTo("DoorsClosed")));
+        //.or(transportEvents.col("Code").equalTo("Periodical")));
         transportEvents.createOrReplaceTempView("transport_events");
         Dataset<Row> validationEvents = sqlContext
                 .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
@@ -238,23 +245,41 @@ public class SparkAnalysis {
                 unix_timestamp(consolidated.col("timestamp"))
                         .minus(unix_timestamp(consolidated.col("time_of_last_transport_event"))))
                 .drop("timestamp_of_transport_event");
+        consolidated = consolidated.filter(col("VehicleID").eqNullSafe(273).and(col("event_source").eqNullSafe("passenger")));
         consolidated.createOrReplaceTempView("transport_events");
-        String dir = UUID.randomUUID().toString();
-        Dataset<Row> result = sqlContext
-                .sql("SELECT VehicleID, GarNr, schedule.route, stop_name, " +
-                        "stop_lat, stop_lon, hypothetical_fi, hypothetical_la, " +
-                        "MIN(" +
+
+        consolidated = sqlContext
+                .sql("SELECT VehicleID, GarNr, hypothetical_fi, hypothetical_la, " +
+                        "schedule.route, stop_name, stop_lat, stop_lon, " +
                         "" +
-                        "SQRT( " +
-                            "(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2)) " +
-                        "" +
-                        ")) AS distance, " +
-                        "Virziens, Delay, ValidTalonaId, timestamp, time_between_validation_and_transport_event " +
+                        "  SQRT(" +
+                        "    POW((stop_lat - hypothetical_fi), 2) + " +
+                        "    POW((stop_lon - hypothetical_la), 2) " +
+                        "  )" +
+                        " AS distance, " +
+                        "Virziens, " +
+                        "ValidTalonaId, " +
+                        "timestamp, " +
+                        "time_between_validation_and_transport_event " +
                         "FROM transport_events " +
-                        "INNER JOIN schedule ON schedule.route=transport_events.route " +
-                        "WHERE event_source='passenger' " +
-                        "GROUP BY distance " +
-                        "ORDER BY GarNr, timestamp");
+                        "INNER JOIN schedule ON schedule.route=transport_events.route");
+        Dataset<Row> result = consolidated.groupBy(
+                col("route"),
+                col("GarNr"),
+                col("ValidTalonaId"),
+                col("timestamp"),
+                col("time_between_validation_and_transport_event"),
+                col("hypothetical_fi"),
+                col("hypothetical_la"))
+                .agg(
+                        first(col("stop_name").as("stop_name")),
+                        first(col("stop_lat").as("stop_lat")),
+                        first(col("stop_lon").as("stop_lon")),
+                        min(col("distance")).as("distance"))
+                .orderBy(
+                        col("GarNr"),
+                        col("timestamp"));
+        String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
     }
