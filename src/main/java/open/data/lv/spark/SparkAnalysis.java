@@ -136,7 +136,7 @@ public class SparkAnalysis {
     private static void processEventsData(SQLContext sqlContext) {
         //Gyro, Speed
         Dataset<Row> transportEvents = sqlContext
-                .sql("SELECT SentDate, VehicleID, event_type.Code, " +
+                .sql("SELECT VehicleMessageID, SentDate, VehicleID, event_type.Code, " +
                         "WGS84Fi, WGS84La, Odometer, Delay, ShiftID, TripID FROM routes " +
                         "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason");
         transportEvents = transportEvents
@@ -175,9 +175,9 @@ public class SparkAnalysis {
         Seq<String> vehicleIDColumn =  new Set.Set1<>("VehicleID").toSeq();
         transportEvents = transportEvents
                 .join(vehiclesOnRoute, vehicleIDColumn, "inner");
-        transportEvents = transportEvents.withColumn("timestamp_of_transport_event", transportEvents.col("SentDate"));
+        transportEvents = transportEvents
+                .withColumn("timestamp_of_transport_event", transportEvents.col("SentDate"));
         transportEvents.createOrReplaceTempView("transport_events");
-
         Seq<String> garageNumberColumn =  new Set.Set1<>("GarNr").toSeq();
         validationEvents = validationEvents
                 .join(vehiclesOnRoute, garageNumberColumn, "inner");
@@ -212,7 +212,6 @@ public class SparkAnalysis {
                 .withColumn("event_source",
                         lit("passenger"));
         transportEvents = transportEvents.unionByName(validationEvents);
-        transportEvents.createOrReplaceTempView("transport_events");
         transportEvents = transportEvents
                 .withColumn("timestamp", coalesce(col("time"), col("SentDate")))
                 .drop("time", "SentDate");
@@ -223,7 +222,7 @@ public class SparkAnalysis {
 
         Dataset<Row> consolidated = sqlContext
                 .sql("SELECT VehicleID, GarNr, TMarsruts, route, Virziens, Code, WGS84Fi, WGS84La, " +
-                        "Odometer, Delay, ShiftID, TripID, event_source, ValidTalonaId, timestamp, timestamp_of_transport_event " +
+                        "Odometer, VehicleMessageID, event_source, ValidTalonaId, timestamp, timestamp_of_transport_event " +
                         "FROM transport_events")
                 .withColumn("route", coalesce(col("TMarsruts"), col("route")))
                 .drop("TMarsruts");
@@ -237,10 +236,12 @@ public class SparkAnalysis {
         Column hypotheticalFi = last(consolidated.col("WGS84Fi"), true).over(ws);
         Column hypotheticalLa = last(consolidated.col("WGS84La"), true).over(ws);
         Column timePassed = last(consolidated.col("timestamp_of_transport_event"), true).over(ws);
+        Column vehicleMessageId = last(consolidated.col("VehicleMessageID"), true).over(ws);
         consolidated = consolidated
                 .withColumn("hypothetical_fi", hypotheticalFi)
                 .withColumn("hypothetical_la", hypotheticalLa)
-                .withColumn("time_of_last_transport_event", timePassed);
+                .withColumn("time_of_last_transport_event", timePassed)
+                .withColumn("vehicle_message_id", vehicleMessageId);
         consolidated = consolidated.withColumn("time_between_validation_and_transport_event",
                 unix_timestamp(consolidated.col("timestamp"))
                         .minus(unix_timestamp(consolidated.col("time_of_last_transport_event"))))
@@ -265,7 +266,12 @@ public class SparkAnalysis {
                         "FROM transport_events " +
                         "INNER JOIN schedule ON schedule.route=transport_events.route");*/
         consolidated = sqlContext
-                .sql("SELECT route, VehicleID, GarNr, hypothetical_fi, hypothetical_la, " +
+                .sql("SELECT route, " +
+                        "vehicle_message_id, " +
+                        "VehicleID, " +
+                        "GarNr, " +
+                        "hypothetical_fi, " +
+                        "hypothetical_la, " +
                         "Virziens, " +
                         "ValidTalonaId, " +
                         "timestamp, " +
@@ -274,6 +280,7 @@ public class SparkAnalysis {
         //consolidated.withColumn("UUID", monotonically_increasing_id());
 
         Dataset<Row> actualStopsAndEvents = consolidated.groupBy(
+                col("vehicle_message_id"),
                 col("route"),
                 col("hypothetical_fi"),
                 col("hypothetical_la")
@@ -289,27 +296,27 @@ public class SparkAnalysis {
             plus(abs(actualStopsAndRealStops.col("stop_lon")
                 .$minus(actualStopsAndRealStops.col("hypothetical_la")))));
         Dataset<Row> minimals = actualStopsAndRealStops.groupBy(
-                col("route"),
+                col("vehicle_message_id"),
+                //col("route"),
                 col("hypothetical_fi"),
                 col("hypothetical_la"))
                 .agg(min(col("diff")).as("min"));
-        actualStopsAndRealStops = minimals.join(actualStopsAndRealStops, new Set.Set3<>("route", "hypothetical_fi", "hypothetical_la").toSeq()).where(col("min").eqNullSafe("diff"));
-        actualStopsAndRealStops.show(500);
-
-/*        Seq<String> minimalDistanceColumn =  new Set.Set1<>("UUID").toSeq();
-        Dataset<Row> minimalDistances = consolidated.groupBy(
-                col("UUID"),
-                col("VehicleID"),
-                col("ValidTalonaId"))
-                .agg(min(col("sqr_distance")).as("sqr_distance")).drop(
-                        "sqr_distance",
-                        "VehicleID",
-                        "ValidTalonaId"
-                );
-        Dataset<Row> result = consolidated.join(minimalDistances, minimalDistanceColumn, "inner");
+        actualStopsAndRealStops = minimals.join(actualStopsAndRealStops, new Set.Set3<>("vehicle_message_id", "hypothetical_fi", "hypothetical_la").toSeq())
+                .where(minimals.col("min")
+                        .equalTo(actualStopsAndRealStops.col("diff"))).drop("min").orderBy(col("hypothetical_fi"), col("stop_name"));
+        actualStopsAndRealStops = actualStopsAndRealStops.withColumn("distance_meters",
+                sqrt(pow(2, (actualStopsAndRealStops.col("stop_lat")
+                        .minus(actualStopsAndRealStops.col("hypothetical_fi").multiply(111300)))).
+                        plus(pow(2, (actualStopsAndRealStops.col("stop_lon")
+                                .minus(actualStopsAndRealStops.col("hypothetical_la").multiply(60800)))))));
+        //actualStopsAndRealStops.show(500);
+        actualStopsAndRealStops = actualStopsAndRealStops.drop("hypothetical_fi", "hypothetical_la", "route");
+        Seq<String> minimalDistanceColumn =  new Set.Set1<>("vehicle_message_id").toSeq();
+        Dataset<Row> result = consolidated.join(actualStopsAndRealStops.as("s"), minimalDistanceColumn, "inner")
+                .drop("vehicle_message_id", "diff");
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
-                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);*/
+                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
     }
 
     private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
