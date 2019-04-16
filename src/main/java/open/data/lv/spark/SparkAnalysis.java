@@ -248,40 +248,68 @@ public class SparkAnalysis {
         consolidated = consolidated.filter(col("VehicleID").eqNullSafe(273).and(col("event_source").eqNullSafe("passenger")));
         consolidated.createOrReplaceTempView("transport_events");
 
-        consolidated = sqlContext
+        //Since the distance is relatively small, we can use the rectangular distance approximation
+        //using formula SQRT(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2))
+        //This approximation is faster than using the Haversine formula.
+        //But for comparing distances we can compare squares of coordinate differences without square root calculation.
+/*        consolidated = sqlContext
                 .sql("SELECT VehicleID, GarNr, hypothetical_fi, hypothetical_la, " +
                         "schedule.route, stop_name, stop_lat, stop_lon, " +
-                        "" +
-                        "  SQRT(" +
-                        "    POW((stop_lat - hypothetical_fi), 2) + " +
-                        "    POW((stop_lon - hypothetical_la), 2) " +
-                        "  )" +
-                        " AS distance, " +
+                        " ( POW((stop_lat - hypothetical_fi), 2) + " +
+                        " POW((stop_lon - hypothetical_la), 2) ) " +
+                        " AS sqr_distance, " +
                         "Virziens, " +
                         "ValidTalonaId, " +
                         "timestamp, " +
                         "time_between_validation_and_transport_event " +
                         "FROM transport_events " +
-                        "INNER JOIN schedule ON schedule.route=transport_events.route");
-        Seq<String> minimalDistanceColumn =  new Set.Set1<>("distance").toSeq();
-        Dataset<Row> result = consolidated.join(consolidated.as("minimal").groupBy(
-                col("route").as("m_route"),
-                col("GarNr").as("GN"),
-                col("ValidTalonaId").as("VTI")
-                //col("timestamp"),
-                //col("time_between_validation_and_transport_event"),
-                //col("hypothetical_fi"),
-                //col("hypothetical_la"),
-                //col("stop_name"),
-                //col("stop_lat"),
-                //col("stop_lon")
-                ).agg(min(col("distance")).as("distance")), minimalDistanceColumn, "inner");
-                //.orderBy(
-                        //col("GarNr"),
-                        //col("timestamp"));
+                        "INNER JOIN schedule ON schedule.route=transport_events.route");*/
+        consolidated = sqlContext
+                .sql("SELECT route, VehicleID, GarNr, hypothetical_fi, hypothetical_la, " +
+                        "Virziens, " +
+                        "ValidTalonaId, " +
+                        "timestamp, " +
+                        "time_between_validation_and_transport_event " +
+                        "FROM transport_events");
+        //consolidated.withColumn("UUID", monotonically_increasing_id());
+
+        Dataset<Row> actualStopsAndEvents = consolidated.groupBy(
+                col("route"),
+                col("hypothetical_fi"),
+                col("hypothetical_la")
+        ).count();
+        Dataset<Row> schedule = sqlContext.sql("SELECT route, stop_name, stop_lat, stop_lon FROM schedule");
+        Dataset<Row> actualStopsAndRealStops = actualStopsAndEvents
+                .join(schedule, new Set.Set1<>("route").toSeq(), "inner");
+        //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
+        double coefficient = 0.5462713387241689;
+        actualStopsAndRealStops = actualStopsAndRealStops.withColumn("diff",
+                abs(actualStopsAndRealStops.col("stop_lat")
+                                .$minus(actualStopsAndRealStops.col("hypothetical_fi"))).$times(coefficient).
+            plus(abs(actualStopsAndRealStops.col("stop_lon")
+                .$minus(actualStopsAndRealStops.col("hypothetical_la")))));
+        Dataset<Row> minimals = actualStopsAndRealStops.groupBy(
+                col("route"),
+                col("hypothetical_fi"),
+                col("hypothetical_la"))
+                .agg(min(col("diff")).as("min"));
+        actualStopsAndRealStops = minimals.join(actualStopsAndRealStops, new Set.Set3<>("route", "hypothetical_fi", "hypothetical_la").toSeq()).where(col("min").eqNullSafe("diff"));
+        actualStopsAndRealStops.show(500);
+
+/*        Seq<String> minimalDistanceColumn =  new Set.Set1<>("UUID").toSeq();
+        Dataset<Row> minimalDistances = consolidated.groupBy(
+                col("UUID"),
+                col("VehicleID"),
+                col("ValidTalonaId"))
+                .agg(min(col("sqr_distance")).as("sqr_distance")).drop(
+                        "sqr_distance",
+                        "VehicleID",
+                        "ValidTalonaId"
+                );
+        Dataset<Row> result = consolidated.join(minimalDistances, minimalDistanceColumn, "inner");
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
-                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
+                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);*/
     }
 
     private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
