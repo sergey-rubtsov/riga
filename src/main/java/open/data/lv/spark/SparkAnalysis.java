@@ -58,7 +58,8 @@ public class SparkAnalysis {
         //readEventsDataAndCreateViews(sqlContext);
         readGTFSDataAndCreateViews(sqlContext);
         readPreprocessedData(sqlContext);
-        //processGTFSData(sqlContext);
+        processGTFSData(sqlContext);
+        processExits(sqlContext);
         //processEventsData(sqlContext);
     }
 
@@ -68,7 +69,7 @@ public class SparkAnalysis {
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("delimiter", ",")
-                .csv(classLoader.getResource("real/GTFS/preprocessed_data.csv").getPath());
+                .csv(classLoader.getResource("real/preprocessed_data.csv").getPath());
         data.createOrReplaceTempView("preprocessed_data");
     }
 
@@ -108,6 +109,19 @@ public class SparkAnalysis {
                 .option("delimiter", ",")
                 .csv(classLoader.getResource("real/GTFS/route_types.txt").getPath());
         type.createOrReplaceTempView("route_types");
+    }
+
+    //if we process different dates, we need to group by days too
+    private static void processExits(SQLContext sqlContext) {
+        //group by v.ticket having count(v.ticket) > 1) ORDER BY v.ticket"
+        Dataset<Row> result = sqlContext.sql("SELECT * FROM preprocessed_data")
+                .groupBy(col("ValidTalonaId"))
+                .count()
+                .where(col("trips").gt(1));
+
+        String dir = UUID.randomUUID().toString();
+        result.coalesce(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
     }
 
     private static void processGTFSData(SQLContext sqlContext) {
