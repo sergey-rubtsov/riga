@@ -28,12 +28,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * SELECT latitude, longitude, SQRT(
- *     POW(69.1 * (latitude - [startlat]), 2) +
- *     POW(69.1 * ([startlng] - longitude) * COS(latitude / 57.3), 2)) AS distance
- * FROM TableName HAVING distance < 25 ORDER BY distance;
- */
 public class SparkAnalysis {
 
     public static void main(String[] args) {
@@ -61,10 +55,21 @@ public class SparkAnalysis {
         Logger.getLogger("akka").setLevel(Level.OFF);*/
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
-        readEventsDataAndCreateViews(sqlContext);
+        //readEventsDataAndCreateViews(sqlContext);
         readGTFSDataAndCreateViews(sqlContext);
-        processGTFSData(sqlContext);
-        processEventsData(sqlContext);
+        readPreprocessedData(sqlContext);
+        //processGTFSData(sqlContext);
+        //processEventsData(sqlContext);
+    }
+
+    private static void readPreprocessedData(SQLContext sqlContext) {
+        ClassLoader classLoader = SparkAnalysis.class.getClassLoader();
+        Dataset<Row> data = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("delimiter", ",")
+                .csv(classLoader.getResource("real/GTFS/preprocessed_data.csv").getPath());
+        data.createOrReplaceTempView("preprocessed_data");
     }
 
     private static void readGTFSDataAndCreateViews(SQLContext sqlContext) {
@@ -105,14 +110,6 @@ public class SparkAnalysis {
         type.createOrReplaceTempView("route_types");
     }
 
-    /**
-     +-----+--------------------+--------+--------+
-     |route|           stop_name|stop_lat|stop_lon|
-     +-----+--------------------+--------+--------+
-     |  A 1|        Abrenes iela|56.94606|24.13001|
-     |  A 1|        Merķeļa iela|56.94945|24.11884|
-     |  A 1|       Tērbatas iela|56.95303|24.11615|
-     */
     private static void processGTFSData(SQLContext sqlContext) {
         Dataset<Row> schedule = sqlContext
                 .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, direction_id, " +
@@ -134,7 +131,6 @@ public class SparkAnalysis {
     }
 
     private static void processEventsData(SQLContext sqlContext) {
-        //Gyro, Speed
         Dataset<Row> transportEvents = sqlContext
                 .sql("SELECT VehicleMessageID, SentDate, VehicleID, event_type.Code, " +
                         "WGS84Fi, WGS84La, Odometer, Delay, ShiftID, TripID FROM routes " +
@@ -170,8 +166,6 @@ public class SparkAnalysis {
         //In Validations table for 'Tr 101' we have 119 records garage numbers of vehicles,
         //in Vehicles table we have only 93 records with connected VehicleID
         vehiclesOnRoute.createOrReplaceTempView("vehicles_on_route");
-        long events = vehiclesOnRoute.agg(sum(col("events"))).first().getLong(0);
-        System.out.println("Number of events: " + events);
         Seq<String> vehicleIDColumn =  new Set.Set1<>("VehicleID").toSeq();
         transportEvents = transportEvents
                 .join(vehiclesOnRoute, vehicleIDColumn, "inner");
@@ -228,7 +222,7 @@ public class SparkAnalysis {
                 .drop("TMarsruts");
         consolidated.createOrReplaceTempView("transport_events");
 
-        //fill coordinates with Window function
+        //Fill missed values with Window function after union two different sets
         WindowSpec ws = Window
                 .partitionBy(consolidated.col("GarNr"))
                 .orderBy(consolidated.col("timestamp"))
@@ -246,25 +240,8 @@ public class SparkAnalysis {
                 unix_timestamp(consolidated.col("timestamp"))
                         .minus(unix_timestamp(consolidated.col("time_of_last_transport_event"))))
                 .drop("timestamp_of_transport_event");
-        consolidated = consolidated.filter(col("VehicleID").eqNullSafe(273).and(col("event_source").eqNullSafe("passenger")));
+        consolidated = consolidated.filter(col("event_source").eqNullSafe("passenger"));
         consolidated.createOrReplaceTempView("transport_events");
-
-        //Since the distance is relatively small, we can use the rectangular distance approximation
-        //using formula SQRT(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2))
-        //This approximation is faster than using the Haversine formula.
-        //But for comparing distances we can compare squares of coordinate differences without square root calculation.
-/*        consolidated = sqlContext
-                .sql("SELECT VehicleID, GarNr, hypothetical_fi, hypothetical_la, " +
-                        "schedule.route, stop_name, stop_lat, stop_lon, " +
-                        " ( POW((stop_lat - hypothetical_fi), 2) + " +
-                        " POW((stop_lon - hypothetical_la), 2) ) " +
-                        " AS sqr_distance, " +
-                        "Virziens, " +
-                        "ValidTalonaId, " +
-                        "timestamp, " +
-                        "time_between_validation_and_transport_event " +
-                        "FROM transport_events " +
-                        "INNER JOIN schedule ON schedule.route=transport_events.route");*/
         consolidated = sqlContext
                 .sql("SELECT route, " +
                         "vehicle_message_id, " +
@@ -277,8 +254,6 @@ public class SparkAnalysis {
                         "timestamp, " +
                         "time_between_validation_and_transport_event " +
                         "FROM transport_events");
-        //consolidated.withColumn("UUID", monotonically_increasing_id());
-
         Dataset<Row> actualStopsAndEvents = consolidated.groupBy(
                 col("vehicle_message_id"),
                 col("route"),
@@ -292,9 +267,9 @@ public class SparkAnalysis {
         double coefficient = 0.5462713387241689;
         actualStopsAndRealStops = actualStopsAndRealStops.withColumn("diff",
                 abs(actualStopsAndRealStops.col("stop_lat")
-                                .$minus(actualStopsAndRealStops.col("hypothetical_fi"))).$times(coefficient).
-            plus(abs(actualStopsAndRealStops.col("stop_lon")
-                .$minus(actualStopsAndRealStops.col("hypothetical_la")))));
+                        .$minus(actualStopsAndRealStops.col("hypothetical_fi"))).$times(coefficient).
+                        plus(abs(actualStopsAndRealStops.col("stop_lon")
+                                .$minus(actualStopsAndRealStops.col("hypothetical_la")))));
         Dataset<Row> minimals = actualStopsAndRealStops.groupBy(
                 col("vehicle_message_id"),
                 //col("route"),
@@ -304,12 +279,17 @@ public class SparkAnalysis {
         actualStopsAndRealStops = minimals.join(actualStopsAndRealStops, new Set.Set3<>("vehicle_message_id", "hypothetical_fi", "hypothetical_la").toSeq())
                 .where(minimals.col("min")
                         .equalTo(actualStopsAndRealStops.col("diff"))).drop("min").orderBy(col("hypothetical_fi"), col("stop_name"));
-        actualStopsAndRealStops = actualStopsAndRealStops.withColumn("distance_meters",
-                sqrt(pow(2, (actualStopsAndRealStops.col("stop_lat")
-                        .minus(actualStopsAndRealStops.col("hypothetical_fi").multiply(111300)))).
-                        plus(pow(2, (actualStopsAndRealStops.col("stop_lon")
-                                .minus(actualStopsAndRealStops.col("hypothetical_la").multiply(60800)))))));
-        //actualStopsAndRealStops.show(500);
+        //Since the distance is relatively small, we can use the rectangular distance approximation using formula
+        //SQRT(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2))
+        //but we need to translate grades into km.
+        //This approximation is faster than using the Haversine formula.
+        //But for comparing distances we can compare squares of coordinate differences without square root calculation.
+        actualStopsAndRealStops = actualStopsAndRealStops.withColumn("distance_km",
+                sqrt(pow((actualStopsAndRealStops.col("stop_lat")
+                        .minus(actualStopsAndRealStops.col("hypothetical_fi")).multiply(111.3)), 2).
+                        plus(pow((actualStopsAndRealStops.col("stop_lon")
+                        .minus(actualStopsAndRealStops.col("hypothetical_la")).multiply(60.8)), 2))));
+        //actualStopsAndRealStops.show();
         actualStopsAndRealStops = actualStopsAndRealStops.drop("hypothetical_fi", "hypothetical_la", "route");
         Seq<String> minimalDistanceColumn =  new Set.Set1<>("vehicle_message_id").toSeq();
         Dataset<Row> result = consolidated.join(actualStopsAndRealStops.as("s"), minimalDistanceColumn, "inner")
