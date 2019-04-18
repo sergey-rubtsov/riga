@@ -113,11 +113,16 @@ public class SparkAnalysis {
 
     //if we process different dates, we need to group by days too
     private static void processExits(SQLContext sqlContext) {
-        Dataset<Row> result = sqlContext.sql("SELECT * FROM preprocessed_data")
+        Dataset<Row> transplants = sqlContext.sql("SELECT * FROM preprocessed_data")
                 .withColumn("transplants",
                         count("*")
                                 .over(Window.partitionBy(col("ValidTalonaId"))))
-                .filter(col("transplants").gt(1)).orderBy(col("ValidTalonaId"), col("timestamp"));
+                .filter(col("transplants").gt(1));//.orderBy(col("ValidTalonaId"), col("timestamp"));
+        WindowSpec ws = Window
+                .partitionBy(transplants.col("ValidTalonaId"))
+                .orderBy(transplants.col("timestamp"));
+        Dataset<Row> result = transplants
+                .withColumn("previous_stop_name", lag(col("stop_name"), 1, null).over(ws));
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
