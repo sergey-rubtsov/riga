@@ -55,20 +55,16 @@ public class SparkAnalysis {
         Logger.getLogger("akka").setLevel(Level.OFF);*/
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
-        readEventsDataAndCreateViews(sqlContext);
+        //readEventsDataAndCreateViews(sqlContext);
         readGTFSDataAndCreateViews(sqlContext);
         processGTFSData(sqlContext);
-        postProcessGTFSAndEvents(sqlContext);
         //processAllEvents(sqlContext);
         readPreprocessedData(sqlContext);
 
-        //processExits(sqlContext);
+        processExits(sqlContext);
         //processEventsData(sqlContext);
     }
 
-    private static void postProcessGTFSAndEvents(SQLContext sqlContext) {
-
-    }
 
     //we create the real
     private static void processAllEvents(SQLContext sqlContext) {
@@ -338,7 +334,7 @@ public class SparkAnalysis {
                 .partitionBy(transactions.col("ValidTalonaId"))
                 .orderBy(transactions.col("timestamp"));
 
-        Dataset<Row> result = transactions
+        Dataset<Row> enters = transactions
                 .withColumn("first_stop_lat", first(col("stop_lat"), true).over(ws))
                 .withColumn("first_stop_lon", first(col("stop_lon"), true).over(ws))
                 .withColumn("first_stop_name", first(col("stop_name"), true).over(ws))
@@ -356,6 +352,36 @@ public class SparkAnalysis {
                 .withColumn("next_stop_name", lag(col("stop_name"), -1, null).over(ws))
                 .withColumn("next_route", lag(col("route"), -1, null).over(ws))
                 .withColumn("next_direction", lag(col("direction"), -1, null).over(ws));
+
+        Dataset<Row> schedule = sqlContext
+                .sql("SELECT route, direction, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM schedule");
+        Dataset<Row> result = enters.join(schedule, new Set.Set2<>("route", "direction").toSeq(), "inner");
+        //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
+        double coefficient = 0.5462713387241689;
+        result = result.withColumn("diff_enter",
+                abs(result.col("exit_stop_lat")
+                        .$minus(result.col("next_stop_lat"))).$times(coefficient).
+                        plus(abs(result.col("exit_stop_lon")
+                                .$minus(result.col("next_stop_lon")))));
+        result = result.withColumn("diff_last_enter",
+                abs(result.col("exit_stop_lat")
+                        .$minus(result.col("first_stop_lat"))).$times(coefficient).
+                        plus(abs(result.col("exit_stop_lon")
+                                .$minus(result.col("first_stop_lon")))));
+
+        result = result.withColumn("diff", coalesce(col("diff_enter"), col("diff_last_enter")))
+                .drop("diff_enter", "diff_last_enter");
+
+        Dataset<Row> minimals = result.groupBy(
+                col("ValidTalonaId"))
+                .agg(first(col("timestamp")).as("timestamp"), min(col("diff")).as("min"));
+        result = minimals.join(result,
+                new Set.Set2<>("ValidTalonaId", "timestamp").toSeq())
+                .where(minimals.col("min")
+                        .equalTo(result.col("diff")))
+                .drop("min")
+                .orderBy(col("ValidTalonaId"), col("stop_name"));
+
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
