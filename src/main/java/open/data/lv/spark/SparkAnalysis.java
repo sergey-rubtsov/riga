@@ -326,10 +326,11 @@ public class SparkAnalysis {
     //if we process different dates, we need to group by days too
     private static void processExits(SQLContext sqlContext) {
         Dataset<Row> transactions = sqlContext.sql("SELECT * FROM preprocessed_data")
-                .withColumn("transplants",
+                .withColumn("transactions",
                         count("*")
-                                .over(Window.partitionBy(col("ValidTalonaId"))))
-                .filter(col("transplants").gt(1));
+                                .over(Window.partitionBy(col("ValidTalonaId"))));
+        transactions.createOrReplaceTempView("transactions");
+        transactions = transactions.filter(col("transactions").gt(1));
         WindowSpec ws = Window
                 .partitionBy(transactions.col("ValidTalonaId"))
                 .orderBy(transactions.col("timestamp"));
@@ -340,12 +341,6 @@ public class SparkAnalysis {
                 .withColumn("first_stop_name", first(col("stop_name"), true).over(ws))
                 .withColumn("first_route", first(col("route"), true).over(ws))
                 .withColumn("first_direction", first(col("direction"), true).over(ws))
-                .withColumn("previous_stop_timestamp", lag(col("timestamp"), 1, null).over(ws))
-                .withColumn("previous_stop_lat", lag(col("stop_lat"), 1, null).over(ws))
-                .withColumn("previous_stop_lon", lag(col("stop_lon"), 1, null).over(ws))
-                .withColumn("previous_stop_name", lag(col("stop_name"), 1, null).over(ws))
-                .withColumn("previous_route", lag(col("route"), 1, null).over(ws))
-                .withColumn("previous_direction", lag(col("direction"), 1, null).over(ws))
                 .withColumn("next_stop_timestamp", lag(col("timestamp"), -1, null).over(ws))
                 .withColumn("next_stop_lat", lag(col("stop_lat"), -1, null).over(ws))
                 .withColumn("next_stop_lon", lag(col("stop_lon"), -1, null).over(ws))
@@ -379,9 +374,31 @@ public class SparkAnalysis {
                 new Set.Set2<>("ValidTalonaId", "timestamp").toSeq())
                 .where(minimals.col("min")
                         .equalTo(result.col("diff")))
-                .drop("min")
-                .orderBy(col("ValidTalonaId"), col("stop_name"));
-
+                .drop("min");
+        result = sqlContext.sql("SELECT * FROM transactions").join(
+                result.select(
+                        col("ValidTalonaId"),
+                        col("timestamp"),
+                        col("exit_stop_name"),
+                        col("exit_stop_lat"),
+                        col("exit_stop_lon")),
+                new Set.Set2<>("ValidTalonaId", "timestamp").toSeq(), "right")
+                .select(
+                        col("route"),
+                        col("count").as("passengers_count"),
+                        col("transactions").as("transactions_count"),
+                        col("direction"),
+                        col("VehicleID"),
+                        col("GarNr"),
+                        col("ValidTalonaId"),
+                        col("timestamp"),
+                        col("stop_name").as("enter_stop_name"),
+                        col("stop_lat").as("enter_stop_lat"),
+                        col("stop_lon").as("enter_stop_lon"),
+                        col("exit_stop_name"),
+                        col("exit_stop_lat"),
+                        col("exit_stop_lon")
+        );
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
