@@ -336,6 +336,7 @@ public class SparkAnalysis {
                 .orderBy(transactions.col("timestamp"));
 
         Dataset<Row> enters = transactions
+                //.withColumn("number_of_transaction", row_number().over(ws))
                 .withColumn("first_stop_lat", first(col("stop_lat"), true).over(ws))
                 .withColumn("first_stop_lon", first(col("stop_lon"), true).over(ws))
                 .withColumn("first_stop_name", first(col("stop_name"), true).over(ws))
@@ -350,7 +351,9 @@ public class SparkAnalysis {
 
         Dataset<Row> schedule = sqlContext
                 .sql("SELECT route, direction, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM schedule");
-        Dataset<Row> result = enters.join(schedule, new Set.Set2<>("route", "direction").toSeq(), "inner");
+        Dataset<Row> result = enters.join(schedule, new Set.Set2<>("route", "direction").toSeq(), "left");
+        result.orderBy(col("ValidTalonaId"),
+                col("timestamp")).show(1000);
         //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
         double coefficient = 0.5462713387241689;
         result = result.withColumn("diff_enter",
@@ -375,18 +378,37 @@ public class SparkAnalysis {
                 .where(minimals.col("min")
                         .equalTo(result.col("diff")))
                 .drop("min");
+
+        //recalculate distance again in kilometers for minimal distances
+        result = result.withColumn("diff_enter",
+                sqrt(pow((result.col("exit_stop_lat")
+                        .minus(result.col("next_stop_lat")).multiply(111.3)), 2).
+                        plus(pow((result.col("exit_stop_lon")
+                                .minus(result.col("next_stop_lon")).multiply(60.8)), 2))));
+        result = result.withColumn("diff_last_enter",
+                sqrt(pow((result.col("exit_stop_lat")
+                        .minus(result.col("first_stop_lat")).multiply(111.3)), 2).
+                        plus(pow((result.col("exit_stop_lon")
+                                .minus(result.col("first_stop_lon")).multiply(60.8)), 2))));
+        result = result.withColumn("distance_between_exit_and_enter", coalesce(col("diff_enter"), col("diff_last_enter")))
+                .drop("diff_enter", "diff_last_enter");
+
         result = sqlContext.sql("SELECT * FROM transactions").join(
                 result.select(
                         col("ValidTalonaId"),
                         col("timestamp"),
                         col("exit_stop_name"),
                         col("exit_stop_lat"),
-                        col("exit_stop_lon")),
+                        col("exit_stop_lon"),
+                        //col("number_of_transaction"),
+                        col("distance_between_exit_and_enter")
+                ),
                 new Set.Set2<>("ValidTalonaId", "timestamp").toSeq(), "right")
                 .select(
                         col("route"),
                         col("count").as("passengers_count"),
                         col("transactions").as("transactions_count"),
+                        //col("number_of_transaction"),
                         col("direction"),
                         col("VehicleID"),
                         col("GarNr"),
@@ -397,8 +419,10 @@ public class SparkAnalysis {
                         col("stop_lon").as("enter_stop_lon"),
                         col("exit_stop_name"),
                         col("exit_stop_lat"),
-                        col("exit_stop_lon")
-        );
+                        col("exit_stop_lon"),
+                        col("distance_between_exit_and_enter")
+        ).orderBy(col("ValidTalonaId"),
+                        col("timestamp"));
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
