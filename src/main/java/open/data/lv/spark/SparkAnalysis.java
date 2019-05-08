@@ -142,14 +142,15 @@ public class SparkAnalysis {
         enters.createOrReplaceTempView("enters");
 
         Dataset<Row> schedule = sqlContext
-                .sql("SELECT route, direction, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM schedule");
-        Dataset<Row> intermediate = enters.join(schedule, enters.col("next_route").equalTo(schedule.col("route"))
-                .and(enters.col("next_direction").equalTo(schedule.col("direction"))), "inner");
-        Dataset<Row> last = enters.join(schedule, enters.col("first_route").equalTo(schedule.col("route"))
-                .and(enters.col("first_direction").notEqual(schedule.col("direction"))), "inner");
-        Dataset<Row> result = intermediate.union(last).orderBy(col("ValidTalonaId"), col("timestamp"));
+                .sql("SELECT route as schedule_route, direction as schedule_direction, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM schedule");
+        Dataset<Row> intermediate = enters.join(schedule, enters.col("route").equalTo(schedule.col("schedule_route"))
+                .and(enters.col("direction").equalTo(schedule.col("schedule_direction"))), "left");
+        //Dataset<Row> last = enters.join(schedule, enters.col("first_route").equalTo(schedule.col("schedule_route"))
+                //.and(enters.col("first_direction").notEqual(schedule.col("schedule_direction"))), "inner")
+                //.filter(col("number_of_transaction").equalTo(col("transactions")));
+        Dataset<Row> result = intermediate.orderBy(col("ValidTalonaId"), col("timestamp"));;//.union(last).orderBy(col("ValidTalonaId"), col("timestamp"));
 
-        result.show(1000);
+        result.show(200);
 
         //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
         double coefficient = 0.5462713387241689;
@@ -188,38 +189,40 @@ public class SparkAnalysis {
                         plus(pow((result.col("exit_stop_lon")
                                 .minus(result.col("first_stop_lon")).multiply(60.8)), 2))));
         result = result.withColumn("distance_between_exit_and_enter", coalesce(col("diff_enter"), col("diff_last_enter")))
-                .drop("diff_enter", "diff_last_enter");
-
-        result = sqlContext.sql("SELECT * FROM transactions").join(
-                result.select(
-                        col("ValidTalonaId"),
-                        col("timestamp"),
-                        col("exit_stop_name"),
-                        col("exit_stop_lat"),
-                        col("exit_stop_lon"),
-                        //col("number_of_transaction"),
-                        col("distance_between_exit_and_enter")
-                ),
-                new Set.Set2<>("ValidTalonaId", "timestamp").toSeq(), "right")
-                .select(
-                        col("route"),
-                        col("count").as("passengers_count"),
-                        col("transactions").as("transactions_count"),
-                        //col("number_of_transaction"),
-                        col("direction"),
-                        col("VehicleID"),
-                        col("GarNr"),
-                        col("ValidTalonaId"),
-                        col("timestamp"),
-                        col("stop_name").as("enter_stop_name"),
-                        col("stop_lat").as("enter_stop_lat"),
-                        col("stop_lon").as("enter_stop_lon"),
-                        col("exit_stop_name"),
-                        col("exit_stop_lat"),
-                        col("exit_stop_lon"),
-                        col("distance_between_exit_and_enter")
-                ).orderBy(col("ValidTalonaId"),
+                .drop("diff_enter", "diff_last_enter").orderBy(col("ValidTalonaId"),
                         col("timestamp"));
+
+
+//        result = sqlContext.sql("SELECT * FROM transactions").join(
+//                result.select(
+//                        col("ValidTalonaId"),
+//                        col("timestamp"),
+//                        col("exit_stop_name"),
+//                        col("exit_stop_lat"),
+//                        col("exit_stop_lon"),
+//                        col("number_of_transaction"),
+//                        col("distance_between_exit_and_enter")
+//                ),
+//                new Set.Set2<>("ValidTalonaId", "timestamp").toSeq(), "inner")
+//                .select(
+//                        col("route"),
+//                        col("count").as("passengers_count"),
+//                        col("transactions").as("transactions_count"),
+//                        col("number_of_transaction"),
+//                        col("direction"),
+//                        col("VehicleID"),
+//                        col("GarNr"),
+//                        col("ValidTalonaId"),
+//                        col("timestamp"),
+//                        col("stop_name").as("enter_stop_name"),
+//                        col("stop_lat").as("enter_stop_lat"),
+//                        col("stop_lon").as("enter_stop_lon"),
+//                        col("exit_stop_name"),
+//                        col("exit_stop_lat"),
+//                        col("exit_stop_lon"),
+//                        col("distance_between_exit_and_enter")
+//                ).orderBy(col("ValidTalonaId"),
+//                        col("timestamp"));
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
