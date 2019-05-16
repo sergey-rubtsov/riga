@@ -59,11 +59,11 @@ public class SparkAnalysis {
         readGTFSDataAndCreateViews(sqlContext);
         processGTFSData(sqlContext);
 
-        //readPreprocessedData(sqlContext);
-        //processExits(sqlContext);
+        readPreprocessedData(sqlContext);
+        processExits(sqlContext);
         
-        readEventsDataAndCreateViews(sqlContext);
-        processEventsData(sqlContext);
+        //readEventsDataAndCreateViews(sqlContext);
+        //processEventsData(sqlContext);
     }
 
     private static void readPreprocessedData(SQLContext sqlContext) {
@@ -148,7 +148,7 @@ public class SparkAnalysis {
         Dataset<Row> intermediate = enters.join(breadCrumbs,
                 enters.col("route").equalTo(breadCrumbs.col("schedule_route"))
                 .and(enters.col("direction").equalTo(breadCrumbs.col("schedule_direction")))
-                .and(enters.col("stop_sequence").leq(breadCrumbs.col("stop_sequence"))),
+                .and(enters.col("stop_sequence").lt(breadCrumbs.col("stop_sequence"))),
                 "left");
 
         Dataset<Row> result = intermediate.orderBy(col("ValidTalonaId"), col("timestamp"));
@@ -446,13 +446,13 @@ public class SparkAnalysis {
                 .option("header", "true")
                 .option("delimiter", ";")
                 .option("inferSchema", "true")
-                .csv(classLoader.getResource("Vehicles.csv").getPath());
+                .csv(classLoader.getResource("real/Vehicles.csv").getPath());
         vehicles.createOrReplaceTempView("vehicles");
         Dataset<Row> eventType = sqlContext.read()
                 .option("header", "true")
                 .option("delimiter", ";")
                 .option("inferSchema", "true")
-                .csv(classLoader.getResource("SendingReasons.csv").getPath());
+                .csv(classLoader.getResource("real/SendingReasons.csv").getPath());
         eventType.createOrReplaceTempView("event_type");
     }
 }
