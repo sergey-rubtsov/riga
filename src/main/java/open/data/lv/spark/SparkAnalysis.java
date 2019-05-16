@@ -55,14 +55,15 @@ public class SparkAnalysis {
         Logger.getLogger("akka").setLevel(Level.OFF);*/
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
-        //readEventsDataAndCreateViews(sqlContext);
+
         readGTFSDataAndCreateViews(sqlContext);
         processGTFSData(sqlContext);
-        //processAllEvents(sqlContext);
-        readPreprocessedData(sqlContext);
 
-        processExits(sqlContext);
-        //processEventsData(sqlContext);
+        //readPreprocessedData(sqlContext);
+        //processExits(sqlContext);
+        
+        readEventsDataAndCreateViews(sqlContext);
+        processEventsData(sqlContext);
     }
 
     private static void readPreprocessedData(SQLContext sqlContext) {
@@ -141,14 +142,16 @@ public class SparkAnalysis {
                 .orderBy(col("ValidTalonaId"), col("timestamp"));
         enters.createOrReplaceTempView("enters");
 
-        Dataset<Row> schedule = sqlContext
-                .sql("SELECT route as schedule_route, direction as schedule_direction, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM schedule");
-        Dataset<Row> intermediate = enters.join(schedule, enters.col("route").equalTo(schedule.col("schedule_route"))
-                .and(enters.col("direction").equalTo(schedule.col("schedule_direction"))), "left");
-        //Dataset<Row> last = enters.join(schedule, enters.col("first_route").equalTo(schedule.col("schedule_route"))
-        //.and(enters.col("first_direction").notEqual(schedule.col("schedule_direction"))), "inner")
-        //.filter(col("number_of_transaction").equalTo(col("transactions")));
-        Dataset<Row> result = intermediate.orderBy(col("ValidTalonaId"), col("timestamp"));;//.union(last).orderBy(col("ValidTalonaId"), col("timestamp"));
+        Dataset<Row> breadCrumbs = sqlContext
+                .sql("SELECT route as schedule_route, direction as schedule_direction, stop_sequence, " +
+                        "stop_id as exit_stop_id, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM bread_crumbs");
+        Dataset<Row> intermediate = enters.join(breadCrumbs,
+                enters.col("route").equalTo(breadCrumbs.col("schedule_route"))
+                .and(enters.col("direction").equalTo(breadCrumbs.col("schedule_direction")))
+                .and(enters.col("stop_sequence").leq(breadCrumbs.col("stop_sequence"))),
+                "left");
+
+        Dataset<Row> result = intermediate.orderBy(col("ValidTalonaId"), col("timestamp"));
 
         //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
         double coefficient = 0.5462713387241689;
@@ -174,10 +177,6 @@ public class SparkAnalysis {
                 .where(minimals.col("min")
                         .equalTo(result.col("diff")))
                 .drop("min", "diff");
-
-/*        result.coalesce(1).write()
-                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);*/
-
         //recalculate distance again in kilometers for minimal distances
         result = result.withColumn("diff_enter",
                 sqrt(pow((result.col("exit_stop_lat")
@@ -201,44 +200,16 @@ public class SparkAnalysis {
                 col("GarNr"),
                 col("ValidTalonaId"),
                 col("timestamp"),
+                col("stop_id").as("enter_stop_id"),
                 col("stop_name").as("enter_stop_name"),
                 col("stop_lat").as("enter_stop_lat"),
                 col("stop_lon").as("enter_stop_lon"),
+                col("exit_stop_id"),
                 col("exit_stop_name"),
                 col("exit_stop_lat"),
                 col("exit_stop_lon"),
                 col("distance_between_exit_and_enter")
         ).orderBy(col("ValidTalonaId"), col("timestamp"));
-
-/*        result = sqlContext.sql("SELECT * FROM transactions").join(
-                result.select(
-                        col("ValidTalonaId"),
-                        col("timestamp"),
-                        col("exit_stop_name"),
-                        col("exit_stop_lat"),
-                        col("exit_stop_lon"),
-                        col("number_of_transaction"),
-                        col("distance_between_exit_and_enter")
-                ),
-                new Set.Set2<>("ValidTalonaId", "timestamp").toSeq(), "inner")
-                .select(
-                        col("route"),
-                        col("count").as("passengers_count"),
-                        col("transactions").as("transactions_count"),
-                        col("number_of_transaction"),
-                        col("direction"),
-                        col("VehicleID"),
-                        col("GarNr"),
-                        col("ValidTalonaId"),
-                        col("timestamp"),
-                        col("stop_name").as("enter_stop_name"),
-                        col("stop_lat").as("enter_stop_lat"),
-                        col("stop_lon").as("enter_stop_lon"),
-                        col("exit_stop_name"),
-                        col("exit_stop_lat"),
-                        col("exit_stop_lon"),
-                        col("distance_between_exit_and_enter")
-                );*/
         String dir = UUID.randomUUID().toString();
         result.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
@@ -247,7 +218,7 @@ public class SparkAnalysis {
     private static void processGTFSData(SQLContext sqlContext) {
         Dataset<Row> schedule = sqlContext
                 .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, direction_id, " +
-                        "trips.route_id, stop_name, stop_lat, stop_lon, arrival_time, departure_time FROM stop_times " +
+                        "trips.route_id, stop_name, stop_lat, stop_lon, stops.stop_id as stop_id, arrival_time, departure_time, stop_sequence FROM stop_times " +
                         "INNER JOIN stops ON stop_times.stop_id=stops.stop_id " +
                         "INNER JOIN trips on stop_times.trip_id=trips.trip_id " +
                         "INNER JOIN gtfs_routes on gtfs_routes.route_id=trips.route_id " +
@@ -256,18 +227,24 @@ public class SparkAnalysis {
         schedule = schedule.withColumn("direction",
                 when(col("direction_id").equalTo(0), "Forth")
                         .when(col("direction_id").equalTo(1), "Back"));
-        schedule = schedule.groupBy(
+        schedule = schedule.orderBy(
+                        col("route"),
+                        col("direction"),
+                        col("arrival_time"));
+        schedule.createOrReplaceTempView("schedule");
+        Dataset<Row> points = schedule.groupBy(
                 col("route"),
                 col("direction"),
                 col("stop_name"),
+                col("stop_id"),
                 col("stop_lat"),
                 col("stop_lon"))
-                .agg(min(col("arrival_time")).as("arrival_time"))
+                .agg(first(col("stop_sequence")).as("stop_sequence"))
                 .orderBy(
                         col("route"),
                         col("direction"),
-                        col("arrival_time")).drop(col("arrival_time"));
-        schedule.createOrReplaceTempView("schedule");
+                        col("stop_sequence"));
+        points.createOrReplaceTempView("bread_crumbs");
     }
 
     private static void processEventsData(SQLContext sqlContext) {
@@ -277,8 +254,6 @@ public class SparkAnalysis {
                         "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason");
         transportEvents = transportEvents
                 .filter(transportEvents.col("Code").equalTo("DoorsOpen"));
-        //.or(transportEvents.col("Code").equalTo("DoorsClosed")));
-        //.or(transportEvents.col("Code").equalTo("Periodical")));
         transportEvents.createOrReplaceTempView("transport_events");
         Dataset<Row> validationEvents = sqlContext
                 .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
@@ -403,7 +378,7 @@ public class SparkAnalysis {
                 col("hypothetical_fi"),
                 col("hypothetical_la")
         ).count();
-        Dataset<Row> schedule = sqlContext.sql("SELECT route, direction, stop_name, stop_lat, stop_lon FROM schedule");
+        Dataset<Row> schedule = sqlContext.sql("SELECT route, direction, stop_name, stop_id, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
         Dataset<Row> actualStopsAndRealStops = actualStopsAndEvents
                 .join(schedule, new Set.Set2<>("route", "direction").toSeq(), "inner");
         //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
@@ -423,8 +398,7 @@ public class SparkAnalysis {
                 new Set.Set4<>("vehicle_message_id", "direction", "hypothetical_fi", "hypothetical_la").toSeq())
                 .where(minimals.col("min")
                         .equalTo(actualStopsAndRealStops.col("diff")))
-                .drop("min")
-                .orderBy(col("hypothetical_fi"), col("stop_name"));
+                .drop("min");
         //Since the distance is relatively small, we can use the rectangular distance approximation using formula
         //SQRT(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2))
         //but we need to translate grades into km.
