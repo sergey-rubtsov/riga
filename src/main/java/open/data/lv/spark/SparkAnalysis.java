@@ -59,11 +59,11 @@ public class SparkAnalysis {
         readGTFSDataAndCreateViews(sqlContext);
         processGTFSData(sqlContext);
 
-        readPreprocessedData(sqlContext);
-        processExits(sqlContext);
+        //readPreprocessedData(sqlContext);
+        //processExits(sqlContext);
         
-        //readEventsDataAndCreateViews(sqlContext);
-        //processEventsData(sqlContext);
+        readEventsDataAndCreateViews(sqlContext);
+        processEventsData(sqlContext);
     }
 
     private static void readPreprocessedData(SQLContext sqlContext) {
@@ -355,10 +355,44 @@ public class SparkAnalysis {
                 unix_timestamp(consolidated.col("timestamp"))
                         .minus(unix_timestamp(consolidated.col("time_of_last_transport_event"))))
                 .drop("timestamp_of_transport_event");
-        //event source 'vehicle' can be useful later
-        consolidated = consolidated.filter(col("event_source").eqNullSafe("passenger"));
-        consolidated.createOrReplaceTempView("transport_events");
-        consolidated = sqlContext
+        Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
+        String dir = UUID.randomUUID().toString();
+
+        Dataset<Row> vehicles = consolidated.filter(col("event_source").eqNullSafe("vehicle"))
+                .select(col("VehicleID"),
+                        col("vehicle_message_id"),
+                        col("route").as("vehicle_route"),
+                        col("WGS84Fi").as("transport_gps_fi"),
+                        col("WGS84La").as("transport_gps_la"),
+                        col("timestamp"));
+        Dataset<Row> doorsOpenedPositionsAndScheduledStops = vehicles
+                .join(breadCrumbs,
+                        vehicles.col("vehicle_route").equalTo(breadCrumbs.col("route")),
+                        "inner");
+        //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
+        double coefficient = 0.5462713387241689;
+        doorsOpenedPositionsAndScheduledStops = doorsOpenedPositionsAndScheduledStops.withColumn("diff",
+                abs(doorsOpenedPositionsAndScheduledStops.col("stop_lat")
+                        .minus(doorsOpenedPositionsAndScheduledStops.col("transport_gps_fi"))).multiply(coefficient).
+                        plus(abs(doorsOpenedPositionsAndScheduledStops.col("stop_lon")
+                                .minus(doorsOpenedPositionsAndScheduledStops.col("transport_gps_la")))));
+        Dataset<Row> closest = doorsOpenedPositionsAndScheduledStops.groupBy(
+                col("vehicle_message_id"),
+                col("transport_gps_fi"),
+                col("transport_gps_la"))
+                .agg(min(col("diff")).as("min"));
+        doorsOpenedPositionsAndScheduledStops = closest.join(doorsOpenedPositionsAndScheduledStops,
+                new Set.Set3<>("vehicle_message_id", "transport_gps_fi", "transport_gps_la").toSeq())
+                .where(closest.col("min")
+                        .equalTo(doorsOpenedPositionsAndScheduledStops.col("diff")))
+                .drop("min")
+                .orderBy(col("VehicleID"), col("timestamp"));
+        doorsOpenedPositionsAndScheduledStops.coalesce(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "/result/vehicles/" + dir);
+
+        Dataset<Row> passengers = consolidated.filter(col("event_source").eqNullSafe("passenger"));
+        passengers.createOrReplaceTempView("passenger_events");
+        passengers = sqlContext
                 .sql("SELECT route, " +
                         "event_source, " +
                         "vehicle_message_id, " +
@@ -370,52 +404,51 @@ public class SparkAnalysis {
                         "ValidTalonaId, " +
                         "timestamp, " +
                         "time_between_validation_and_transport_event " +
-                        "FROM transport_events");
-        Dataset<Row> actualStopsAndEvents = consolidated.groupBy(
+                        "FROM passenger_events");
+        Dataset<Row> actualStopsAndEvents = passengers.groupBy(
                 col("vehicle_message_id"),
                 col("route"),
                 col("Virziens").as("direction"),
                 col("hypothetical_fi"),
                 col("hypothetical_la")
         ).count();
-        Dataset<Row> schedule = sqlContext.sql("SELECT route, direction, stop_name, stop_id, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
-        Dataset<Row> actualStopsAndRealStops = actualStopsAndEvents
-                .join(schedule, new Set.Set2<>("route", "direction").toSeq(), "inner");
-        //lat degree (56.9) = 111.3 km, lon degree (24) = 60.8 km, coefficient = 60.8 / 111.3
-        double coefficient = 0.5462713387241689;
-        actualStopsAndRealStops = actualStopsAndRealStops.withColumn("diff",
-                abs(actualStopsAndRealStops.col("stop_lat")
-                        .$minus(actualStopsAndRealStops.col("hypothetical_fi"))).$times(coefficient).
-                        plus(abs(actualStopsAndRealStops.col("stop_lon")
-                                .$minus(actualStopsAndRealStops.col("hypothetical_la")))));
-        Dataset<Row> minimals = actualStopsAndRealStops.groupBy(
+        Dataset<Row> hypotheticalStopsAndScheduledStops = actualStopsAndEvents
+                .join(breadCrumbs, new Set.Set2<>("route", "direction").toSeq(), "inner");
+
+        hypotheticalStopsAndScheduledStops = hypotheticalStopsAndScheduledStops.withColumn("diff",
+                abs(hypotheticalStopsAndScheduledStops.col("stop_lat")
+                        .minus(hypotheticalStopsAndScheduledStops.col("hypothetical_fi"))).multiply(coefficient).
+                        plus(abs(hypotheticalStopsAndScheduledStops.col("stop_lon")
+                                .minus(hypotheticalStopsAndScheduledStops.col("hypothetical_la")))));
+
+        Dataset<Row> minimals = hypotheticalStopsAndScheduledStops.groupBy(
                 col("vehicle_message_id"),
                 col("direction"),
                 col("hypothetical_fi"),
                 col("hypothetical_la"))
                 .agg(min(col("diff")).as("min"));
-        actualStopsAndRealStops = minimals.join(actualStopsAndRealStops,
+        hypotheticalStopsAndScheduledStops = minimals.join(hypotheticalStopsAndScheduledStops,
                 new Set.Set4<>("vehicle_message_id", "direction", "hypothetical_fi", "hypothetical_la").toSeq())
                 .where(minimals.col("min")
-                        .equalTo(actualStopsAndRealStops.col("diff")))
+                        .equalTo(hypotheticalStopsAndScheduledStops.col("diff")))
                 .drop("min");
         //Since the distance is relatively small, we can use the rectangular distance approximation using formula
         //SQRT(POW((stop_lat - hypothetical_fi), 2) + POW((stop_lon - hypothetical_la), 2))
         //but we need to translate grades into km.
         //This approximation is faster than using the Haversine formula.
         //But for comparing distances we can compare squares of coordinate differences without square root calculation.
-        actualStopsAndRealStops = actualStopsAndRealStops.withColumn("distance_kilometers",
-                sqrt(pow((actualStopsAndRealStops.col("stop_lat")
-                        .minus(actualStopsAndRealStops.col("hypothetical_fi")).multiply(111.3)), 2).
-                        plus(pow((actualStopsAndRealStops.col("stop_lon")
-                                .minus(actualStopsAndRealStops.col("hypothetical_la")).multiply(60.8)), 2))));
-        actualStopsAndRealStops = actualStopsAndRealStops.drop("hypothetical_fi", "hypothetical_la", "route");
+        hypotheticalStopsAndScheduledStops = hypotheticalStopsAndScheduledStops.withColumn("distance_kilometers",
+                sqrt(pow((hypotheticalStopsAndScheduledStops.col("stop_lat")
+                        .minus(hypotheticalStopsAndScheduledStops.col("hypothetical_fi")).multiply(111.3)), 2).
+                        plus(pow((hypotheticalStopsAndScheduledStops.col("stop_lon")
+                                .minus(hypotheticalStopsAndScheduledStops.col("hypothetical_la")).multiply(60.8)), 2))));
+        hypotheticalStopsAndScheduledStops = hypotheticalStopsAndScheduledStops.drop("hypothetical_fi", "hypothetical_la", "route");
         Seq<String> minimalDistanceColumn =  new Set.Set1<>("vehicle_message_id").toSeq();
-        Dataset<Row> result = consolidated.join(actualStopsAndRealStops.as("s"), minimalDistanceColumn, "inner")
+        passengers = passengers.join(hypotheticalStopsAndScheduledStops.as("s"), minimalDistanceColumn, "inner")
                 .drop("vehicle_message_id", "diff");
-        String dir = UUID.randomUUID().toString();
-        result.coalesce(1).write()
-                .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
+
+        passengers.coalesce(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "/result/passengers/" + dir);
     }
 
     private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
