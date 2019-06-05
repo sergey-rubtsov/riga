@@ -218,7 +218,7 @@ public class SparkAnalysis {
     private static void processGTFSData(SQLContext sqlContext) {
         Dataset<Row> schedule = sqlContext
                 .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, direction_id, " +
-                        "trips.route_id, stop_name, stop_lat, stop_lon, stops.stop_id as stop_id, arrival_time, departure_time, stop_sequence FROM stop_times " +
+                        "trips.route_id, stop_name, stop_lat, stop_lon, stops.stop_id as stop_id, arrival_time, departure_time, stop_sequence, stop_times.trip_id as trip FROM stop_times " +
                         "INNER JOIN stops ON stop_times.stop_id=stops.stop_id " +
                         "INNER JOIN trips on stop_times.trip_id=trips.trip_id " +
                         "INNER JOIN gtfs_routes on gtfs_routes.route_id=trips.route_id " +
@@ -239,11 +239,12 @@ public class SparkAnalysis {
                 col("stop_id"),
                 col("stop_lat"),
                 col("stop_lon"))
-                .agg(first(col("stop_sequence")).as("stop_sequence"))
+                .agg(first(col("stop_sequence")).as("stop_sequence"), first(col("trip")).as("trip"))
                 .orderBy(
                         col("route"),
                         col("direction"),
                         col("stop_sequence"));
+        points.show();
         points.createOrReplaceTempView("bread_crumbs");
     }
 
@@ -343,7 +344,7 @@ public class SparkAnalysis {
                 unix_timestamp(consolidated.col("timestamp"))
                         .minus(unix_timestamp(consolidated.col("time_of_last_transport_event"))))
                 .drop("timestamp_of_transport_event");
-        Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
+        Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, trip, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
         String dir = UUID.randomUUID().toString();
 
         Dataset<Row> vehicles = consolidated
@@ -379,7 +380,7 @@ public class SparkAnalysis {
                 .where(closest.col("min")
                         .equalTo(doorsOpenedPositionsAndScheduledStops.col("diff")))
                 .drop("min")
-                .orderBy(col("VehicleID"), col("timestamp"));
+                .orderBy(col("trip"), col("direction"), col("stop_sequence"), col("timestamp"));
         doorsOpenedPositionsAndScheduledStops.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/vehicles/" + dir);
 
