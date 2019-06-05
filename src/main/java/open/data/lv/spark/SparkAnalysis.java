@@ -61,7 +61,7 @@ public class SparkAnalysis {
 
         //readPreprocessedData(sqlContext);
         //processExits(sqlContext);
-        
+
         readEventsDataAndCreateViews(sqlContext);
         processEventsData(sqlContext);
     }
@@ -147,8 +147,8 @@ public class SparkAnalysis {
                         "stop_id as exit_stop_id, stop_name as exit_stop_name, stop_lat as exit_stop_lat, stop_lon as exit_stop_lon FROM bread_crumbs");
         Dataset<Row> intermediate = enters.join(breadCrumbs,
                 enters.col("route").equalTo(breadCrumbs.col("schedule_route"))
-                .and(enters.col("direction").equalTo(breadCrumbs.col("schedule_direction")))
-                .and(enters.col("stop_sequence").lt(breadCrumbs.col("stop_sequence"))),
+                        .and(enters.col("direction").equalTo(breadCrumbs.col("schedule_direction")))
+                        .and(enters.col("stop_sequence").lt(breadCrumbs.col("stop_sequence"))),
                 "left");
 
         Dataset<Row> result = intermediate.orderBy(col("ValidTalonaId"), col("timestamp"));
@@ -228,9 +228,9 @@ public class SparkAnalysis {
                 when(col("direction_id").equalTo(0), "Forth")
                         .when(col("direction_id").equalTo(1), "Back"));
         schedule = schedule.orderBy(
-                        col("route"),
-                        col("direction"),
-                        col("arrival_time"));
+                col("route"),
+                col("direction"),
+                col("arrival_time"));
         schedule.createOrReplaceTempView("schedule");
         Dataset<Row> points = schedule.groupBy(
                 col("route"),
@@ -252,8 +252,12 @@ public class SparkAnalysis {
                 .sql("SELECT VehicleMessageID, SentDate, VehicleID, event_type.Code, " +
                         "WGS84Fi, WGS84La, Odometer, Delay, ShiftID, TripID FROM routes " +
                         "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason");
+        //filter open doors only and broken data
         transportEvents = transportEvents
-                .filter(transportEvents.col("Code").equalTo("DoorsOpen"));
+                .filter(transportEvents.col("Code").equalTo("DoorsOpen")
+                        .and(transportEvents.col("WGS84La").notEqual(0.0))
+                        .and(transportEvents.col("WGS84Fi").notEqual(0.0))
+                );
         transportEvents.createOrReplaceTempView("transport_events");
         Dataset<Row> validationEvents = sqlContext
                 .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
@@ -294,26 +298,10 @@ public class SparkAnalysis {
 
         StructType validationSchema = validationEvents.schema();
         List<String> transportFields = Arrays.asList(transportEvents.schema().fieldNames());
-        for(StructField e : validationSchema.fields()) {
-            if (!transportFields.contains(e.name())) {
-                transportEvents = transportEvents
-                        .withColumn(e.name(),
-                                lit(null));
-                transportEvents = transportEvents.withColumn(e.name(),
-                        transportEvents.col(e.name()).cast(Optional.ofNullable(e.dataType()).orElse(StringType)));
-            }
-        }
+        transportEvents = balanceDataset(transportEvents, validationSchema, transportFields);
         StructType transportSchema = transportEvents.schema();
         List<String> validationFields = Arrays.asList(validationEvents.schema().fieldNames());
-        for(StructField e : transportSchema.fields()) {
-            if (!validationFields.contains(e.name())) {
-                validationEvents = validationEvents
-                        .withColumn(e.name(),
-                                lit(null));
-                validationEvents = validationEvents.withColumn(e.name(),
-                        validationEvents.col(e.name()).cast(Optional.ofNullable(e.dataType()).orElse(StringType)));
-            }
-        }
+        validationEvents = balanceDataset(validationEvents, transportSchema, validationFields);
         transportEvents = transportEvents
                 .withColumn("event_source",
                         lit("vehicle"));
@@ -358,13 +346,15 @@ public class SparkAnalysis {
         Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
         String dir = UUID.randomUUID().toString();
 
-        Dataset<Row> vehicles = consolidated.filter(col("event_source").eqNullSafe("vehicle"))
+        Dataset<Row> vehicles = consolidated
+                .filter(col("event_source").eqNullSafe("vehicle"))
                 .select(col("VehicleID"),
                         col("vehicle_message_id"),
                         col("route").as("vehicle_route"),
                         col("WGS84Fi").as("transport_gps_fi"),
                         col("WGS84La").as("transport_gps_la"),
                         col("timestamp"));
+        //Here we need to calculate minimal distance for both directions, because we don't know it for a vehicle
         Dataset<Row> doorsOpenedPositionsAndScheduledStops = vehicles
                 .join(breadCrumbs,
                         vehicles.col("vehicle_route").equalTo(breadCrumbs.col("route")),
@@ -376,11 +366,14 @@ public class SparkAnalysis {
                         .minus(doorsOpenedPositionsAndScheduledStops.col("transport_gps_fi"))).multiply(coefficient).
                         plus(abs(doorsOpenedPositionsAndScheduledStops.col("stop_lon")
                                 .minus(doorsOpenedPositionsAndScheduledStops.col("transport_gps_la")))));
+
         Dataset<Row> closest = doorsOpenedPositionsAndScheduledStops.groupBy(
+                col("direction"),
                 col("vehicle_message_id"),
                 col("transport_gps_fi"),
                 col("transport_gps_la"))
                 .agg(min(col("diff")).as("min"));
+        doorsOpenedPositionsAndScheduledStops = doorsOpenedPositionsAndScheduledStops.drop(col("direction"));
         doorsOpenedPositionsAndScheduledStops = closest.join(doorsOpenedPositionsAndScheduledStops,
                 new Set.Set3<>("vehicle_message_id", "transport_gps_fi", "transport_gps_la").toSeq())
                 .where(closest.col("min")
@@ -449,6 +442,19 @@ public class SparkAnalysis {
 
         passengers.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/passengers/" + dir);
+    }
+
+    private static Dataset<Row> balanceDataset(Dataset<Row> events, StructType schema, List<String> fields) {
+        for (StructField e : schema.fields()) {
+            if (!fields.contains(e.name())) {
+                events = events
+                        .withColumn(e.name(),
+                                lit(null));
+                events = events.withColumn(e.name(),
+                        events.col(e.name()).cast(Optional.ofNullable(e.dataType()).orElse(StringType)));
+            }
+        }
+        return events;
     }
 
     private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
