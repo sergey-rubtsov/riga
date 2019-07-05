@@ -1,20 +1,17 @@
 package open.data.lv.spark;
 
+import org.apache.log4j.Level;
+import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.Row;
-import org.apache.spark.sql.expressions.*;
-import static org.apache.spark.sql.functions.col;
-import static org.apache.spark.sql.functions.*;
-import static org.apache.spark.sql.types.DataTypes.StringType;
-
-import org.apache.log4j.Logger;
-import org.apache.log4j.Level;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
+import org.apache.spark.sql.expressions.Window;
+import org.apache.spark.sql.expressions.WindowSpec;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -28,13 +25,30 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.apache.spark.sql.functions.abs;
+import static org.apache.spark.sql.functions.coalesce;
+import static org.apache.spark.sql.functions.col;
+import static org.apache.spark.sql.functions.count;
+import static org.apache.spark.sql.functions.desc;
+import static org.apache.spark.sql.functions.first;
+import static org.apache.spark.sql.functions.lag;
+import static org.apache.spark.sql.functions.last;
+import static org.apache.spark.sql.functions.lit;
+import static org.apache.spark.sql.functions.min;
+import static org.apache.spark.sql.functions.pow;
+import static org.apache.spark.sql.functions.row_number;
+import static org.apache.spark.sql.functions.sqrt;
+import static org.apache.spark.sql.functions.udf;
+import static org.apache.spark.sql.functions.unix_timestamp;
+import static org.apache.spark.sql.functions.when;
+import static org.apache.spark.sql.types.DataTypes.StringType;
+
 public class SparkAnalysis {
 
     public static void main(String[] args) {
-        Logger.getRootLogger().setLevel(Level.OFF);
-        System.setProperty("hadoop.home.dir", System.getProperty("user.dir") + "/hadoop");
-        System.setProperty("SPARK_CONF_DIR", System.getProperty("user.dir") + "/conf");
-        PropertyConfigurator.configure(System.getProperty("user.dir") + "conf/log4j.properties");
+        System.setProperty("hadoop.home.dir", System.getProperty("user.dir") + "\\hadoop");
+        System.setProperty("SPARK_CONF_DIR", System.getProperty("user.dir") + "\\conf");
+        PropertyConfigurator.configure(System.getProperty("user.dir") + "\\conf\\log4j.properties");
         //SPARK_CONF_DIR
         //SPARK_HOME
         String masterUrl = "local[1]";
@@ -42,7 +56,7 @@ public class SparkAnalysis {
                 .setMaster(masterUrl)
                 .setAppName("Riga public transport")
                 .set("SPARK_HOME", System.getProperty("user.dir"))
-                .set("SPARK_CONF_DIR", System.getProperty("user.dir") + "/conf");
+                .set("SPARK_CONF_DIR", System.getProperty("user.dir") + "\\conf");
         SparkSession spark = SparkSession
                 .builder()
                 .config(conf)
@@ -56,14 +70,34 @@ public class SparkAnalysis {
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
 
-        readGTFSDataAndCreateViews(sqlContext);
-        processGTFSData(sqlContext);
+        //readGTFSDataAndCreateViews(sqlContext);
+        //processGTFSData(sqlContext);
 
         //readPreprocessedData(sqlContext);
         //processExits(sqlContext);
 
         readEventsDataAndCreateViews(sqlContext);
-        processEventsData(sqlContext);
+        filterSelected(sqlContext);
+
+        //processEventsData(sqlContext);
+    }
+
+    private static void filterSelected(SQLContext sqlContext) {
+        Dataset<Row> selected = sqlContext
+                .sql("SELECT * FROM tickets")
+                .groupBy(col("ValidTalonaId")).count()
+                .select(col("ValidTalonaId"), col("count").as("trips"))
+                .groupBy(col("trips"))
+                .agg(first(col("ValidTalonaId")).as("ValidTalonaId"), count(col("trips")).as("count"))
+                .orderBy(desc("count"));
+        Dataset<Row> all = sqlContext
+                .sql("SELECT * FROM tickets");
+        all = all.join(selected, all.col("ValidTalonaId").equalTo(selected.col("ValidTalonaId")), "inner")
+                .drop("ValidTalonaId", "count");
+        all = all.withColumn("ValidTalonaId", all.col("trips")).drop("trips");
+        String dir = UUID.randomUUID().toString();
+        all.coalesce(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + dir);
     }
 
     private static void readPreprocessedData(SQLContext sqlContext) {
@@ -82,28 +116,28 @@ public class SparkAnalysis {
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("delimiter", ",")
-                .option("dateFormat","HH:mm:ss")
+                .option("dateFormat", "HH:mm:ss")
                 .csv(classLoader.getResource("real/GTFS/routes.txt").getPath());
         routes.createOrReplaceTempView("gtfs_routes");
         Dataset<Row> stop_times = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("delimiter", ",")
-                .option("dateFormat","HH:mm:ss")
+                .option("dateFormat", "HH:mm:ss")
                 .csv(classLoader.getResource("real/GTFS/stop_times.txt").getPath());
         stop_times.createOrReplaceTempView("stop_times");
         Dataset<Row> stops = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("delimiter", ",")
-                .option("dateFormat","HH:mm:ss")
+                .option("dateFormat", "HH:mm:ss")
                 .csv(classLoader.getResource("real/GTFS/stops.txt").getPath());
         stops.createOrReplaceTempView("stops");
         Dataset<Row> trips = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("delimiter", ",")
-                .option("dateFormat","HH:mm:ss")
+                .option("dateFormat", "HH:mm:ss")
                 .csv(classLoader.getResource("real/GTFS/trips.txt").getPath());
         trips.createOrReplaceTempView("trips");
         Dataset<Row> type = sqlContext.read()
@@ -286,13 +320,13 @@ public class SparkAnalysis {
         //In Validations table for 'Tr 101' we have 119 records garage numbers of vehicles,
         //in Vehicles table we have only 93 records with connected VehicleID
         vehiclesOnRoute.createOrReplaceTempView("vehicles_on_route");
-        Seq<String> vehicleIDColumn =  new Set.Set1<>("VehicleID").toSeq();
+        Seq<String> vehicleIDColumn = new Set.Set1<>("VehicleID").toSeq();
         transportEvents = transportEvents
                 .join(vehiclesOnRoute, vehicleIDColumn, "inner");
         transportEvents = transportEvents
                 .withColumn("timestamp_of_transport_event", transportEvents.col("SentDate"));
         transportEvents.createOrReplaceTempView("transport_events");
-        Seq<String> garageNumberColumn =  new Set.Set1<>("GarNr").toSeq();
+        Seq<String> garageNumberColumn = new Set.Set1<>("GarNr").toSeq();
         validationEvents = validationEvents
                 .join(vehiclesOnRoute, garageNumberColumn, "inner");
         validationEvents.createOrReplaceTempView("validation_events");
@@ -437,7 +471,7 @@ public class SparkAnalysis {
                         plus(pow((hypotheticalStopsAndScheduledStops.col("stop_lon")
                                 .minus(hypotheticalStopsAndScheduledStops.col("hypothetical_la")).multiply(60.8)), 2))));
         hypotheticalStopsAndScheduledStops = hypotheticalStopsAndScheduledStops.drop("hypothetical_fi", "hypothetical_la", "route");
-        Seq<String> minimalDistanceColumn =  new Set.Set1<>("vehicle_message_id").toSeq();
+        Seq<String> minimalDistanceColumn = new Set.Set1<>("vehicle_message_id").toSeq();
         passengers = passengers.join(hypotheticalStopsAndScheduledStops.as("s"), minimalDistanceColumn, "inner")
                 .drop("vehicle_message_id", "diff");
 
@@ -460,26 +494,26 @@ public class SparkAnalysis {
 
     private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
         ClassLoader classLoader = SparkAnalysis.class.getClassLoader();
-        String valFile = "real/ValidDati23_11_18.txt";
+        String valFile = "real/selected.csv";
         Dataset<Row> tickets = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
-                .option("dateFormat","dd.MM.yyyy HH:mm:ss")
+                .option("dateFormat", "dd.MM.yyyy HH:mm:ss")
                 .csv(classLoader.getResource(valFile).getPath());
         tickets.createOrReplaceTempView("tickets");
         Dataset<Row> routes = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
-                .option("nullValue","NULL")
+                .option("nullValue", "NULL")
                 .option("delimiter", ";")
-                .option("dateFormat","yyyy-MM-dd HH:mm:ss.SSS")
+                .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d1.csv").getPath());
         routes = routes.union(sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
-                .option("nullValue","NULL")
+                .option("nullValue", "NULL")
                 .option("delimiter", ";")
-                .option("dateFormat","yyyy-MM-dd HH:mm:ss.SSS")
+                .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d2.csv").getPath()));
         routes.createOrReplaceTempView("routes");
         Dataset<Row> vehicles = sqlContext.read()

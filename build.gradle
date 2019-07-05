@@ -45,10 +45,10 @@ dependencies {
     compile("org.hibernate:hibernate-core:5.0.11.Final")
     compile("org.hibernate:hibernate-entitymanager:5.0.11.Final")
 
-    compile (group: 'org.apache.spark', name: 'spark-core_2.11', version: '2.3.3') {
+    compile (group: 'org.apache.spark', name: 'spark-core_2.12', version: '2.4.0') {
         exclude group: 'com.fasterxml.jackson.module'
     }
-    compile (group: 'org.apache.spark', name: 'spark-sql_2.11', version: '2.3.3') {
+    compile (group: 'org.apache.spark', name: 'spark-sql_2.12', version: '2.4.0') {
         exclude group: 'com.fasterxml.jackson.core'
     }
     compile group: 'org.codehaus.janino', name: 'janino', version: '3.0.8'
