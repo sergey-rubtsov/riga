@@ -29,6 +29,7 @@ import static org.apache.spark.sql.functions.abs;
 import static org.apache.spark.sql.functions.coalesce;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.count;
+import static org.apache.spark.sql.functions.date_format;
 import static org.apache.spark.sql.functions.desc;
 import static org.apache.spark.sql.functions.first;
 import static org.apache.spark.sql.functions.lag;
@@ -70,34 +71,57 @@ public class SparkAnalysis {
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
 
+        readRealEventsDataAndCreateViews(sqlContext);
+        prepareTransportEventsForJoin(sqlContext);
+        prepareValidationEventsForJoin(sqlContext);
+
+        filterSelected(sqlContext);
+
         //readGTFSDataAndCreateViews(sqlContext);
         //processGTFSData(sqlContext);
 
         //readPreprocessedData(sqlContext);
         //processExits(sqlContext);
-
-        readEventsDataAndCreateViews(sqlContext);
-        filterSelected(sqlContext);
-
         //processEventsData(sqlContext);
     }
 
     private static void filterSelected(SQLContext sqlContext) {
-        Dataset<Row> selected = sqlContext
-                .sql("SELECT * FROM tickets")
+        Dataset<Row> selectedTickets = sqlContext
+                .sql("SELECT * FROM validation_events")
                 .groupBy(col("ValidTalonaId")).count()
                 .select(col("ValidTalonaId"), col("count").as("trips"))
                 .groupBy(col("trips"))
                 .agg(first(col("ValidTalonaId")).as("ValidTalonaId"), count(col("trips")).as("count"))
                 .orderBy(desc("count"));
-        Dataset<Row> all = sqlContext
-                .sql("SELECT * FROM tickets");
-        all = all.join(selected, all.col("ValidTalonaId").equalTo(selected.col("ValidTalonaId")), "inner")
+        Dataset<Row> tickets = sqlContext
+                .sql("SELECT * FROM validation_events");
+        tickets = tickets.join(selectedTickets, tickets.col("ValidTalonaId").equalTo(selectedTickets.col("ValidTalonaId")), "inner")
                 .drop("ValidTalonaId", "count");
-        all = all.withColumn("ValidTalonaId", all.col("trips")).drop("trips");
-        String dir = UUID.randomUUID().toString();
-        all.coalesce(1).write()
-                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + dir);
+        tickets = tickets.withColumn("ValidTalonaId", tickets.col("trips")).drop("trips");
+/*
+        tickets.coalesce(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\validations\\" + UUID.randomUUID().toString());*/
+        //VehicleID;VehicleCompanyCode
+        UserDefinedFunction garageNumber = udf(
+                (Integer i) -> {
+                    while (i > 9999) {
+                        i = i / 10;
+                    }
+                    return i;
+                }, DataTypes.IntegerType
+        );
+        tickets = tickets.withColumn("GarNr",
+                garageNumber.apply(tickets.col("GarNr")));
+        Dataset<Row> vehicles = sqlContext
+                .sql("SELECT * FROM vehicles");
+        Dataset<Row> selectedVehiclesNumbers = tickets.select(col("GarNr"))
+                .groupBy(col("GarNr")).count().join(vehicles, tickets.col("GarNr").equalTo(vehicles.col("VehicleCompanyCode")));
+        Dataset<Row> selectedVehicles = sqlContext
+                .sql("SELECT * FROM routes");
+        selectedVehicles = selectedVehicles.join(selectedVehiclesNumbers, new Set.Set1<>("VehicleID").toSeq(), "inner").drop("count", "VehicleCompanyCode", "GarNr");
+        selectedVehicles.filter(col("SendingReason").equalTo(6));
+        selectedVehicles.coalesce(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\transport\\" + UUID.randomUUID().toString());
     }
 
     private static void readPreprocessedData(SQLContext sqlContext) {
@@ -278,45 +302,18 @@ public class SparkAnalysis {
                         col("route"),
                         col("direction"),
                         col("stop_sequence"));
-        points.show();
         points.createOrReplaceTempView("bread_crumbs");
     }
 
     private static void processEventsData(SQLContext sqlContext) {
         Dataset<Row> transportEvents = sqlContext
-                .sql("SELECT VehicleMessageID, SentDate, VehicleID, event_type.Code, " +
-                        "WGS84Fi, WGS84La, Odometer, Delay, ShiftID, TripID FROM routes " +
-                        "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason");
-        //filter open doors only and broken data
-        transportEvents = transportEvents
-                .filter(transportEvents.col("Code").equalTo("DoorsOpen")
-                        .and(transportEvents.col("WGS84La").notEqual(0.0))
-                        .and(transportEvents.col("WGS84Fi").notEqual(0.0))
-                );
-        transportEvents.createOrReplaceTempView("transport_events");
+                .sql("SELECT * FROM transport_events");
         Dataset<Row> validationEvents = sqlContext
-                .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
-        UserDefinedFunction garageNumber = udf(
-                (Integer i) -> {
-                    while (i > 9999) {
-                        i = i / 10;
-                    }
-                    return i;
-                }, DataTypes.IntegerType
-        );
-        validationEvents = validationEvents.withColumn("GarNr",
-                garageNumber.apply(validationEvents.col("GN"))).drop("GN");
-        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
-        UserDefinedFunction time = udf(
-                (String s) -> new Timestamp(dateFormat.parse(s).getTime()), DataTypes.TimestampType
-        );
-        validationEvents = validationEvents.withColumn("time",
-                time.apply(validationEvents.col("Laiks"))).drop(validationEvents.col("Laiks"));
-        validationEvents.createOrReplaceTempView("validation_events");
+                        .sql("SELECT * FROM validation_events");
         Dataset<Row> vehiclesOnRoute = sqlContext
-                .sql("SELECT first(TMarsruts) as route, GarNr, vehicles.VehicleID, min(time) as first_time, max(time) as last_time, count(time) as events FROM validation_events " +
-                        "INNER JOIN vehicles ON validation_events.GarNr=vehicles.VehicleCompanyCode "
-                        + "GROUP BY GarNr, vehicles.VehicleID ORDER BY first_time");
+                .sql("SELECT first(TMarsruts) as route, GarNr, vehicles.VehicleID, min(time) "
+                        + "as first_time, max(time) as last_time, count(time) as events FROM validation_events "
+                        + "INNER JOIN vehicles ON validation_events.GarNr=vehicles.VehicleCompanyCode");
         //In Validations table for 'Tr 101' we have 119 records garage numbers of vehicles,
         //in Vehicles table we have only 93 records with connected VehicleID
         vehiclesOnRoute.createOrReplaceTempView("vehicles_on_route");
@@ -345,8 +342,8 @@ public class SparkAnalysis {
                         lit("passenger"));
         transportEvents = transportEvents.unionByName(validationEvents);
         transportEvents = transportEvents
-                .withColumn("timestamp", coalesce(col("time"), col("SentDate")))
-                .drop("time", "SentDate");
+                .withColumn("timestamp", coalesce(col("time_stamp"), col("SentDate")))
+                .drop("time_stamp", "SentDate");
         transportEvents = transportEvents
                 .sort(transportEvents.col("GarNr"),
                         transportEvents.col("timestamp"));
@@ -479,6 +476,65 @@ public class SparkAnalysis {
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/passengers/" + dir);
     }
 
+    /**
+     * creates view transport_events:
+     +----------------+-----+-------------------+---------+--------+--------+--------+----------+----------+
+     |VehicleMessageID|GarNr|           SentDate|     Code| WGS84Fi| WGS84La|Odometer|      date|      time|
+     +----------------+-----+-------------------+---------+--------+--------+--------+----------+----------+
+     |       868718306| 6422|2018-11-23 04:48:14|DoorsOpen| 56.9707| 24.0316|     367|2018-11-23|4:48:14 AM|
+     */
+    private static void prepareTransportEventsForJoin(SQLContext sqlContext) {
+        Dataset<Row> transportEvents = sqlContext
+                .sql("SELECT VehicleMessageID, VehicleCompanyCode AS GarNr, SentDate, event_type.Code, " +
+                        "WGS84Fi, WGS84La, Odometer FROM routes " +
+                        "INNER JOIN event_type ON routes.SendingReason=event_type.SendingReason " +
+                        "LEFT JOIN vehicles ON routes.VehicleID=vehicles.VehicleID");
+        //filter open doors only and broken data
+        transportEvents = transportEvents
+                .filter(transportEvents.col("Code").equalTo("DoorsOpen")
+                        .and(transportEvents.col("WGS84La").notEqual(0.0))
+                        .and(transportEvents.col("WGS84Fi").notEqual(0.0))
+                );
+        transportEvents = transportEvents.withColumn("date",
+                transportEvents.col("SentDate").cast(DataTypes.DateType));
+        transportEvents = transportEvents.withColumn("time",
+                date_format(transportEvents.col("SentDate"), "h:m:s a"));
+        transportEvents.createOrReplaceTempView("transport_events");
+    }
+
+    /**
+     * creates view validation_events:
+     * +---------+--------+-------------+-----+-------------------+----------+-----------+
+     * |TMarsruts|Virziens|ValidTalonaId|GarNr|         time_stamp|      date|       time|
+     * +---------+--------+-------------+-----+-------------------+----------+-----------+
+     * |     A 16|    Back|            3| 7688|2018-11-23 09:53:37|2018-11-23| 9:53:37 AM|
+     */
+    private static void prepareValidationEventsForJoin(SQLContext sqlContext) {
+        Dataset<Row> validationEvents = sqlContext
+                .sql("SELECT GarNr as GN, TMarsruts, Virziens, ValidTalonaId, Laiks FROM tickets");
+        UserDefinedFunction garageNumber = udf(
+                (Integer i) -> {
+                    while (i > 9999) {
+                        i = i / 10;
+                    }
+                    return i;
+                }, DataTypes.IntegerType
+        );
+        validationEvents = validationEvents.withColumn("GarNr",
+                garageNumber.apply(validationEvents.col("GN"))).drop("GN");
+        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm:ss");
+        UserDefinedFunction timeStamp = udf(
+                (String s) -> new Timestamp(dateFormat.parse(s).getTime()), DataTypes.TimestampType
+        );
+        validationEvents = validationEvents.withColumn("time_stamp",
+                timeStamp.apply(validationEvents.col("Laiks"))).drop(validationEvents.col("Laiks"));
+        validationEvents = validationEvents.withColumn("date",
+                validationEvents.col("time_stamp").cast(DataTypes.DateType));
+        validationEvents = validationEvents.withColumn("time",
+                date_format(validationEvents.col("time_stamp"), "h:m:s a"));
+        validationEvents.createOrReplaceTempView("validation_events");
+    }
+
     private static Dataset<Row> balanceDataset(Dataset<Row> events, StructType schema, List<String> fields) {
         for (StructField e : schema.fields()) {
             if (!fields.contains(e.name())) {
@@ -492,8 +548,14 @@ public class SparkAnalysis {
         return events;
     }
 
-    private static void readEventsDataAndCreateViews(SQLContext sqlContext) {
+    private static void readSelectedEventsDataAndCreateViews(SQLContext sqlContext) {
+        //transport_events
+        //validation_events
+    }
+
+    private static void readRealEventsDataAndCreateViews(SQLContext sqlContext) {
         ClassLoader classLoader = SparkAnalysis.class.getClassLoader();
+        //ValidDati23_11_18.txt is real, selected.csv is test
         String valFile = "real/selected.csv";
         Dataset<Row> tickets = sqlContext.read()
                 .option("inferSchema", "true")
@@ -501,6 +563,8 @@ public class SparkAnalysis {
                 .option("dateFormat", "dd.MM.yyyy HH:mm:ss")
                 .csv(classLoader.getResource(valFile).getPath());
         tickets.createOrReplaceTempView("tickets");
+        //VehicleMessages20181123d1.csv and VehicleMessages20181123d2.csv are real,
+        //VehicleMessagesSelected.csv is test
         Dataset<Row> routes = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
@@ -508,13 +572,13 @@ public class SparkAnalysis {
                 .option("delimiter", ";")
                 .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d1.csv").getPath());
-        routes = routes.union(sqlContext.read()
+/*        routes = routes.union(sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("nullValue", "NULL")
                 .option("delimiter", ";")
                 .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
-                .csv(classLoader.getResource("real/VehicleMessages20181123d2.csv").getPath()));
+                .csv(classLoader.getResource("real/VehicleMessages20181123d2.csv").getPath()));*/
         routes.createOrReplaceTempView("routes");
         Dataset<Row> vehicles = sqlContext.read()
                 .option("header", "true")
