@@ -75,7 +75,7 @@ public class SparkAnalysis {
         prepareTransportEventsForJoin(sqlContext);
         prepareValidationEventsForJoin(sqlContext);
 
-        filterSelected(sqlContext);
+        //filterSelected(sqlContext);
 
         //readGTFSDataAndCreateViews(sqlContext);
         //processGTFSData(sqlContext);
@@ -98,10 +98,8 @@ public class SparkAnalysis {
         tickets = tickets.join(selectedTickets, tickets.col("ValidTalonaId").equalTo(selectedTickets.col("ValidTalonaId")), "inner")
                 .drop("ValidTalonaId", "count");
         tickets = tickets.withColumn("ValidTalonaId", tickets.col("trips")).drop("trips");
-/*
-        tickets.coalesce(1).write()
+/*        tickets.repartition(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\validations\\" + UUID.randomUUID().toString());*/
-        //VehicleID;VehicleCompanyCode
         UserDefinedFunction garageNumber = udf(
                 (Integer i) -> {
                     while (i > 9999) {
@@ -120,7 +118,7 @@ public class SparkAnalysis {
                 .sql("SELECT * FROM routes");
         selectedVehicles = selectedVehicles.join(selectedVehiclesNumbers, new Set.Set1<>("VehicleID").toSeq(), "inner").drop("count", "VehicleCompanyCode", "GarNr");
         selectedVehicles.filter(col("SendingReason").equalTo(6));
-        selectedVehicles.coalesce(1).write()
+        selectedVehicles.repartition(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\transport\\" + UUID.randomUUID().toString());
     }
 
@@ -548,38 +546,39 @@ public class SparkAnalysis {
         return events;
     }
 
-    private static void readSelectedEventsDataAndCreateViews(SQLContext sqlContext) {
-        //transport_events
-        //validation_events
-    }
-
     private static void readRealEventsDataAndCreateViews(SQLContext sqlContext) {
         ClassLoader classLoader = SparkAnalysis.class.getClassLoader();
-        //ValidDati23_11_18.txt is real, selected.csv is test
-        String valFile = "real/selected.csv";
+        //ValidDati23_11_18.txt is real
+        String valFile = "real/TestValidations.csv";
         Dataset<Row> tickets = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("dateFormat", "dd.MM.yyyy HH:mm:ss")
                 .csv(classLoader.getResource(valFile).getPath());
         tickets.createOrReplaceTempView("tickets");
-        //VehicleMessages20181123d1.csv and VehicleMessages20181123d2.csv are real,
-        //VehicleMessagesSelected.csv is test
+        //VehicleMessages20181123d1.csv and VehicleMessages20181123d2.csv are real
         Dataset<Row> routes = sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("nullValue", "NULL")
                 .option("delimiter", ";")
                 .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
+                .csv(classLoader.getResource("real/TestVehicleMessages.csv").getPath());
+        routes.createOrReplaceTempView("routes");
+        /* Dataset<Row> routes = sqlContext.read()
+                .option("inferSchema", "true")
+                .option("header", "true")
+                .option("nullValue", "NULL")
+                .option("delimiter", ";")
+                .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d1.csv").getPath());
-/*        routes = routes.union(sqlContext.read()
+        routes = routes.union(sqlContext.read()
                 .option("inferSchema", "true")
                 .option("header", "true")
                 .option("nullValue", "NULL")
                 .option("delimiter", ";")
                 .option("dateFormat", "yyyy-MM-dd HH:mm:ss.SSS")
                 .csv(classLoader.getResource("real/VehicleMessages20181123d2.csv").getPath()));*/
-        routes.createOrReplaceTempView("routes");
         Dataset<Row> vehicles = sqlContext.read()
                 .option("header", "true")
                 .option("delimiter", ";")
