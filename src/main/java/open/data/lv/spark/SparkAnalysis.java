@@ -77,8 +77,8 @@ public class SparkAnalysis {
 
         //filterSelected(sqlContext);
 
-        //readGTFSDataAndCreateViews(sqlContext);
-        //processGTFSData(sqlContext);
+        readGTFSDataAndCreateViews(sqlContext);
+        processGTFSDataBuildSchedules(sqlContext);
 
         //readPreprocessedData(sqlContext);
         //processExits(sqlContext);
@@ -271,7 +271,7 @@ public class SparkAnalysis {
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/" + dir);
     }
 
-    private static void processGTFSData(SQLContext sqlContext) {
+    private static void processGTFSDataBuildSchedules(SQLContext sqlContext) {
         Dataset<Row> schedule = sqlContext
                 .sql("SELECT CONCAT(route_types.short_name, ' ', route_short_name) AS route, direction_id, " +
                         "trips.route_id, stop_name, stop_lat, stop_lon, stops.stop_id as stop_id, arrival_time, departure_time, stop_sequence, stop_times.trip_id as trip FROM stop_times " +
@@ -303,11 +303,11 @@ public class SparkAnalysis {
         points.createOrReplaceTempView("bread_crumbs");
     }
 
-    private static void processEventsData(SQLContext sqlContext) {
+    private static void preprocessConsolidatedEventsData(SQLContext sqlContext) {
         Dataset<Row> transportEvents = sqlContext
                 .sql("SELECT * FROM transport_events");
         Dataset<Row> validationEvents = sqlContext
-                        .sql("SELECT * FROM validation_events");
+                .sql("SELECT * FROM validation_events");
         Dataset<Row> vehiclesOnRoute = sqlContext
                 .sql("SELECT first(TMarsruts) as route, GarNr, vehicles.VehicleID, min(time) "
                         + "as first_time, max(time) as last_time, count(time) as events FROM validation_events "
@@ -354,8 +354,11 @@ public class SparkAnalysis {
                 .withColumn("route", coalesce(col("TMarsruts"), col("route")))
                 .drop("TMarsruts");
         consolidated.createOrReplaceTempView("transport_events");
+    }
 
-        //Fill missed values with Window function after union two different sets
+    private void processConsolidatedEventData(SQLContext sqlContext) {
+        Dataset<Row> consolidated = sqlContext.sql("SELECT * FROM transport_events");
+                //Fill missed values with Window function after union two different sets
         WindowSpec ws = Window
                 .partitionBy(consolidated.col("GarNr"))
                 .orderBy(consolidated.col("timestamp"))
@@ -374,7 +377,6 @@ public class SparkAnalysis {
                         .minus(unix_timestamp(consolidated.col("time_of_last_transport_event"))))
                 .drop("timestamp_of_transport_event");
         Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, trip, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
-        String dir = UUID.randomUUID().toString();
 
         Dataset<Row> vehicles = consolidated
                 .filter(col("event_source").eqNullSafe("vehicle"))
@@ -410,6 +412,7 @@ public class SparkAnalysis {
                         .equalTo(doorsOpenedPositionsAndScheduledStops.col("diff")))
                 .drop("min")
                 .orderBy(col("trip"), col("direction"), col("stop_sequence"), col("timestamp"));
+        String dir = UUID.randomUUID().toString();
         doorsOpenedPositionsAndScheduledStops.coalesce(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "/result/vehicles/" + dir);
 
