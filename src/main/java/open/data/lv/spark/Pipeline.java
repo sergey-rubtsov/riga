@@ -1,7 +1,12 @@
 package open.data.lv.spark;
 
+import org.apache.log4j.Level;
+import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 import org.apache.spark.SparkConf;
+import org.apache.spark.ml.classification.NaiveBayes;
+import org.apache.spark.ml.classification.NaiveBayesModel;
+import org.apache.spark.ml.feature.VectorAssembler;
 import org.apache.spark.sql.*;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.expressions.Window;
@@ -28,13 +33,15 @@ import static org.apache.spark.sql.functions.concat;
 import static org.apache.spark.sql.functions.count;
 import static org.apache.spark.sql.functions.date_format;
 import static org.apache.spark.sql.functions.first;
+import static org.apache.spark.sql.functions.hour;
 import static org.apache.spark.sql.functions.lag;
 import static org.apache.spark.sql.functions.last;
 import static org.apache.spark.sql.functions.lit;
 import static org.apache.spark.sql.functions.max;
 import static org.apache.spark.sql.functions.min;
-import static org.apache.spark.sql.functions.pow;
-import static org.apache.spark.sql.functions.sqrt;
+import static org.apache.spark.sql.functions.minute;
+import static org.apache.spark.sql.functions.monotonically_increasing_id;
+import static org.apache.spark.sql.functions.trim;
 import static org.apache.spark.sql.functions.udf;
 import static org.apache.spark.sql.functions.unix_timestamp;
 import static org.apache.spark.sql.functions.when;
@@ -61,6 +68,9 @@ public class Pipeline {
     private static String TRIPS;
 
     private static String ROUTE_TYPES;
+
+    final private static int IMPOSSIBLE_TIME = 2880;
+    final private static int IMPOSSIBLE_COORDINATE = 0;
 
     private static void initPipelineParameters() {
         VEHICLE_MAPPING_FILE = "real/Vehicles.csv";
@@ -113,7 +123,9 @@ public class Pipeline {
         System.setProperty("hadoop.home.dir", System.getProperty("user.dir") + "\\hadoop");
         System.setProperty("SPARK_CONF_DIR", System.getProperty("user.dir") + "\\conf");
         PropertyConfigurator.configure(System.getProperty("user.dir") + "\\conf\\log4j.properties");
-
+        //This two lines hide spark logs
+        Logger.getLogger("org").setLevel(Level.ERROR);
+        Logger.getLogger("akka").setLevel(Level.ERROR);
         SparkConf conf = new SparkConf()
                 .setMaster(MASTER_URL)
                 .setAppName("Riga public transport")
@@ -122,48 +134,162 @@ public class Pipeline {
         SparkSession spark = SparkSession
                 .builder()
                 .config(conf)
+                .config("spark.executor.memory", "70g")
+                .config("spark.driver.memory", "50g")
+                .config("spark.memory.offHeap.enabled", true)
+                .config("spark.memory.offHeap.size", "16g")
                 .getOrCreate();
         SQLContext sqlContext = new SQLContext(spark);
         sqlContext.setConf("spark.sql.caseSensitive", "true");
         initPipelineParameters();
-/*        Dataset<Row> routes = readFiles(sqlContext, ROUTES, "HH:mm:ss", null, ",");
+        //Prepare training set
+        Dataset<Row> routes = readFiles(sqlContext, ROUTES, "HH:mm:ss", null, ",");
+        Dataset<Row> routeTypes = readFiles(sqlContext, ROUTE_TYPES, "HH:mm:ss", null, ",");
+        Dataset<Row> routeMapping = buildRouteMapping(routes, routeTypes);
+
         Dataset<Row> stopTimes = readFiles(sqlContext, STOP_TIMES, "HH:mm:ss", null, ",");
         Dataset<Row> stops = readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
         Dataset<Row> trips = readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
-        Dataset<Row> routeTypes = readFiles(sqlContext, ROUTE_TYPES, "HH:mm:ss", null, ",");
-        Dataset<Row> buildGTFSSchedule = buildGTFSSchedule(routes, stopTimes, stops, trips, routeTypes);*/
 
+        Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
+        //Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
+
+        //Prepare test set
         Dataset<Row> tickets = readFiles(sqlContext, TICKET_VALIDATIONS_FILES, "dd.MM.yyyy HH:mm:ss", null, null);
         Dataset<Row> vehicleMessages = readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", null); //real delimeter is ;
         Dataset<Row> vehicleAndCompanyMapping = readFiles(sqlContext, VEHICLE_MAPPING_FILE, null, null, ";");
         Dataset<Row> eventTypes = readFiles(sqlContext, MESSAGE_TYPE_FILE, null, null, ";");
-
-        Dataset<Row> validationEvents = prepareValidationEventsForJoin(tickets);
-        vehicleMessages.show();
-        eventTypes.show();
+        Dataset<Row> validationEvents = prepareValidationEventsForJoin(tickets, routeMapping);
         Dataset<Row> transportEvents = prepareTransportEventsForJoin(vehicleMessages, eventTypes, vehicleAndCompanyMapping);
+        Dataset<Row> events = unionDataSets(validationEvents, vehicleAndCompanyMapping, transportEvents, routeMapping);
+        //events = proposeCoordinateOfValidations(events);
+        Dataset<Row> test = prepareTestDataset(events);
+        test.show();
 
-        Dataset<Row> events = unionDataSets(validationEvents, vehicleAndCompanyMapping, transportEvents);
+        //Train
+        Dataset<Row> train = prepareTrainDataset(dailySchedule);
+        // create the trainer and set its parameters
+        NaiveBayes nb = new NaiveBayes();
+        VectorAssembler assembler = new VectorAssembler().setInputCols(new String[]{
+                "numeric_route_id",
+                "stop_lat",
+                "stop_lon",
+                "next_stop_lat",
+                "previous_stop_lon",
+                "next_stop_lat",
+                "previous_stop_lon",
+                "timestamp",
+                "next_timestamp",
+                "previous_timestamp"})
+                .setOutputCol("features");
+        Dataset<Row> features = assembler.setHandleInvalid("skip").transform(train);
+        //Dataset<Row> regularRoutes = buildRegularRoutesFromSchedule(dailySchedule);
+        Dataset<Row> unpredicted = assembler.setHandleInvalid("skip").transform(test);
+        unpredicted = unpredicted.limit(30);
+        // Train the model
+        NaiveBayesModel model = nb.fit(features);
+        // Predict
+        Dataset<Row> predictions = model.transform(unpredicted);
 
-        events = proposeCoordinateOfValidations(events);
-        events.orderBy("VehicleID", "timestamp");
-        events.show(300);
-        events.show();
+        predictions = predictions.join(train,
+                predictions.col("prediction").equalTo(train.col("label")),
+                "inner");
+
+        predictions.show(30);
+        spark.stop();
     }
 
-    private static Dataset<Row> buildGTFSSchedule(Dataset<Row> routes,
-                                                  Dataset<Row> stopTimes,
-                                                  Dataset<Row> stops,
-                                                  Dataset<Row> trips,
-                                                  Dataset<Row> routeTypes) {
+    private static Dataset<Row> buildRouteMapping(Dataset<Row> routes, Dataset<Row> routeTypes) {
+        return routes.join(routeTypes, new Set.Set1<>("route_type").toSeq(), "inner")
+                .withColumn("numeric_route_id", monotonically_increasing_id())
+                .select(col("route_id"),
+                        trim(concat(col("short_name"), lit(" "), col("route_short_name"))).as("route"),
+                        col("numeric_route_id"));
+    }
+
+    /**
+     * +-----+---------+----------------+-----+---------+------+---------+--------+--------+------------+-------------+----------+----------+-------------------+----------------------------+----------------+
+     * |route|VehicleID|VehicleMessageID|GarNr|direction|TripID|     Code| WGS84Fi| WGS84La|event_source|ValidTalonaId|      time|      date|          timestamp|timestamp_of_transport_event|numeric_route_id|
+     * +-----+---------+----------------+-----+---------+------+---------+--------+--------+------------+-------------+----------+----------+-------------------+----------------------------+----------------+
+     * | A 30|      273|       868734338| 6251|     null|408311|DoorsOpen|56.97037| 24.0312|     vehicle|         null|5:28:38 AM|2018-11-23|2018-11-23 05:28:38|         2018-11-23 05:28:38|              28|
+     */
+    private static Dataset<Row> prepareTestDataset(Dataset<Row> events) {
+        events = events.filter(col("event_source").equalTo("vehicle"))
+                .drop("timestamp")
+                .withColumnRenamed("WGS84La","stop_lon")
+                .withColumnRenamed("WGS84Fi","stop_lat");
+        events = events
+                .withColumn("timestamp", hour(col("timestamp_of_transport_event"))
+                .multiply(60)
+                .plus(minute(col("timestamp_of_transport_event"))));
+        WindowSpec ws = Window
+                .partitionBy(events.col("TripID"))
+                .orderBy(events.col("time"));
+        return events
+                .withColumn("next_stop_lat", lag(col("stop_lat"), -1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("next_stop_lon", lag(col("stop_lon"), -1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("previous_stop_lat", lag(col("stop_lat"), 1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("previous_stop_lon", lag(col("stop_lon"), 1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("next_timestamp", lag(col("timestamp"), -1, IMPOSSIBLE_TIME).over(ws))
+                .withColumn("previous_timestamp", lag(col("timestamp"), 1, IMPOSSIBLE_TIME).over(ws));
+    }
+
+    /**
+     * +-----+---------+--------------------+-------+--------+--------+-------------+---------------------+
+     * |route|direction|           stop_name|stop_id|stop_lat|stop_lon|stop_sequence|first(trip_id, false)|
+     * +-----+---------+--------------------+-------+--------+--------+-------------+---------------------+
+     * |  A 1|     Back|          Berģuciems|   0342|56.97801|24.30995|            1|                   99|
+     */
+    private static Dataset<Row> buildRegularRoutesFromSchedule(Dataset<Row> schedule) {
+        return schedule.groupBy(
+                col("route"),
+                col("numeric_route_id"),
+                col("direction"),
+                col("stop_name"),
+                col("stop_id"),
+                col("stop_lat"),
+                col("stop_lon"))
+                //.agg(first(col("stop_sequence")).as("stop_sequence"), first(col("trip_id")));
+                .agg(first(col("stop_sequence")).as("stop_sequence"));
+    }
+
+    private static Dataset<Row> prepareTrainDataset(Dataset<Row> schedule) {
+        schedule = schedule.withColumn("timestamp", hour(col("arrival_time"))
+                .multiply(60)
+                .plus(minute(col("arrival_time"))));
+                WindowSpec ws = Window
+                .partitionBy(schedule.col("trip_id"))
+                .orderBy(schedule.col("stop_sequence"));
+        return schedule
+                .withColumn("next_stop_lat", lag(col("stop_lat"), -1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("next_stop_lon", lag(col("stop_lon"), -1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("previous_stop_lat", lag(col("stop_lat"), 1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("previous_stop_lon", lag(col("stop_lon"), 1, IMPOSSIBLE_COORDINATE).over(ws))
+                .withColumn("next_timestamp", lag(col("timestamp"), -1, IMPOSSIBLE_TIME).over(ws))
+                .withColumn("previous_timestamp", lag(col("timestamp"), 1, IMPOSSIBLE_TIME).over(ws));
+    }
+
+    /**
+     * +------------+-----+------------+------------------+-------------------+--------+--------+-------+------------+--------------+-------------+-------+---------+
+     * |       label|route|direction_id|  numeric_route_id|          stop_name|stop_lat|stop_lon|stop_id|arrival_time|departure_time|stop_sequence|trip_id|direction|
+     * +------------+-----+------------+------------------+-------------------+--------+--------+-------+------------+--------------+-------------+-------+---------+
+     * |214748365657|  A 1|           1|                 1|         Berģuciems|56.97801|24.30995|   0342|    05:45:00|      05:45:00|            1|     99|     Back|
+     * |214748365699|  A 1|           1|                 1|        Mākoņu iela|56.97986|24.30494|   0258|    05:46:00|      05:46:00|            2|     99|     Back|
+     */
+    private static Dataset<Row> buildDailySchedule(Dataset<Row> routes,
+                                                   Dataset<Row> stopTimes,
+                                                   Dataset<Row> stops,
+                                                   Dataset<Row> trips,
+                                                   Dataset<Row> numericRouteIdMapping) {
         Dataset<Row> schedule = stopTimes
                 .join(stops, new Set.Set1<>("stop_id").toSeq(), "inner")
                 .join(trips, new Set.Set1<>("trip_id").toSeq(), "inner")
                 .join(routes, new Set.Set1<>("route_id").toSeq(),"inner")
-                .join(routeTypes, new Set.Set1<>("route_type").toSeq(), "inner")
+                .join(numericRouteIdMapping, new Set.Set1<>("route_id").toSeq(),"inner")
                 .select(
-                        concat(col("short_name"), lit(" "), col("route_short_name")).as("route"),
+                        col("route"),
                         col("direction_id"),
+                        col("numeric_route_id"),
                         col("route_id"),
                         col("stop_name"),
                         col("stop_lat"),
@@ -173,14 +299,10 @@ public class Pipeline {
                         col("departure_time"),
                         col("stop_sequence"),
                         col("trip_id"));
-        //direction 0 is Forth, 1 is Back
-        schedule = schedule.withColumn("direction",
-                when(col("direction_id").equalTo(0), "Forth")
-                        .when(col("direction_id").equalTo(1), "Back")).drop("direction_id");
-        return schedule.orderBy(
-                col("route"),
-                col("direction"),
-                col("arrival_time"));
+        return schedule
+                .withColumn("direction", when(col("direction_id").equalTo(0), "Forth")
+                        .when(col("direction_id").equalTo(1), "Back"))
+                .withColumn("label", monotonically_increasing_id());
     }
 
     /**
@@ -217,16 +339,15 @@ public class Pipeline {
     }
 
     /**
-     * creates dataset validation_events:
-     * +---------+--------+-------------+-----+-------------------+----------+-----------+
-     * |TMarsruts|Virziens|ValidTalonaId|GarNr|         time_stamp|      date|       time|
-     * +---------+--------+-------------+-----+-------------------+----------+-----------+
-     * |     A 16|    Back|            3| 7688|2018-11-23 09:53:37|2018-11-23| 9:53:37 AM|
+     * +--------+-------------+-----+-------------------+----------+----------+-----+----------------+
+     * |Virziens|ValidTalonaId|GarNr|         time_stamp|      date|      time|route|numeric_route_id|
+     * +--------+-------------+-----+-------------------+----------+----------+-----+----------------+
+     * |    Back|            2| 6251|2018-11-23 16:29:34|2018-11-23|4:29:34 PM| A 30|              28|
      */
-    private static Dataset<Row> prepareValidationEventsForJoin(Dataset<Row> tickets) {
+    private static Dataset<Row> prepareValidationEventsForJoin(Dataset<Row> tickets, Dataset<Row> routeMapping) {
         Dataset<Row> validationEvents = tickets.select(
                 col("GarNr").as("GN"),
-                col("TMarsruts"),
+                trim(col("TMarsruts")).as("TMarsruts"),
                 col("Virziens"),
                 col("ValidTalonaId"),
                 col("Laiks"));
@@ -237,7 +358,9 @@ public class Pipeline {
         validationEvents = validationEvents.withColumn("date",
                 validationEvents.col("time_stamp").cast(DataTypes.DateType));
         return validationEvents.withColumn("time",
-                date_format(validationEvents.col("time_stamp"), "h:m:s a"));
+                date_format(validationEvents.col("time_stamp"), "h:m:s a"))
+                .join(routeMapping, validationEvents.col("TMarsruts").equalTo(routeMapping.col("route")), "inner")
+                .drop("TMarsruts");
     }
 
     private static UserDefinedFunction mapGarageNumberFunction() {
@@ -260,12 +383,14 @@ public class Pipeline {
 
     private static Dataset<Row> unionDataSets(Dataset<Row> validations,
                                               Dataset<Row> companyMapping,
-                                              Dataset<Row> vehicle) {
+                                              Dataset<Row> vehicle,
+                                              Dataset<Row> routeMapping) {
         Dataset<Row> vehiclesOnRoute = validations.join(companyMapping,
                 validations.col("GarNr").equalTo(companyMapping.col("VehicleCompanyCode")),
                 "inner")
                 .groupBy(col("GarNr"), col("VehicleID")).agg(
-                        first(col("TMarsruts")).as("route"),
+                        first(col("route")).as("route"),
+                        first(col("numeric_route_id")).as("numeric_route_id"),
                         min(col("time")).as("first_time"),
                         max(col("time")).as("last_time"),
                         count(col("time")).as("events")
@@ -279,7 +404,10 @@ public class Pipeline {
                 .drop(col("Odometer"));
         vehicle = vehicle
                 .join(vehiclesOnRoute
-                        .select(col("VehicleID"), col("route")), vehicleIDColumn, "inner");
+                        .select(
+                                col("VehicleID"),
+                                col("route"),
+                                col("numeric_route_id")), vehicleIDColumn, "inner");
         vehicle = vehicle
                 .withColumn("timestamp_of_transport_event", vehicle.col("SentDate"));
         Seq<String> garageNumberColumn = new Set.Set1<>("GarNr").toSeq();
@@ -305,12 +433,12 @@ public class Pipeline {
         consolidated = consolidated
                 .sort(consolidated.col("GarNr"),
                         consolidated.col("timestamp"));
-        return consolidated.select(
+        consolidated = consolidated.select(
                 col("VehicleID"),
                 col("VehicleMessageID"),
                 col("GarNr"),
-                col("TMarsruts"),
                 col("route"),
+                col("numeric_route_id"),
                 col("Virziens").as("direction"),
                 col("TripID"),
                 col("Code"),
@@ -321,9 +449,8 @@ public class Pipeline {
                 col("time"),
                 col("date"),
                 col("timestamp"),
-                col("timestamp_of_transport_event"))
-                .withColumn("route", coalesce(col("TMarsruts"), col("route")))
-                .drop("TMarsruts");
+                col("timestamp_of_transport_event"));
+        return consolidated;
     }
 
     private static Dataset<Row> balanceDataset(Dataset<Row> events, StructType schema, List<String> fields) {
@@ -363,7 +490,7 @@ public class Pipeline {
 
 
     /**
-     * Try to use k-nearest neighbor or Hidden Markov Model
+     * Try to use k-nearest neighbor or Hidden Markov Model or Delaunay triangulation
      */
     private static void classifyTransportEventsUsingSchedule() {
 
