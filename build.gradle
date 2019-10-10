@@ -20,6 +20,14 @@ version '1.0-SNAPSHOT'
 
 apply plugin: 'java'
 apply plugin: 'org.springframework.boot'
+apply plugin: 'idea'
+
+idea {
+    module {
+        downloadJavadoc = true
+        downloadSources = true
+    }
+}
 
 sourceCompatibility = 1.8
 
@@ -51,6 +59,11 @@ dependencies {
     compile (group: 'org.apache.spark', name: 'spark-sql_2.12', version: '2.4.0') {
         exclude group: 'com.fasterxml.jackson.core'
     }
+
+    compile group: 'org.apache.spark', name: 'spark-mllib_2.12', version: '2.4.0'
+
+    compile 'nz.ac.waikato.cms.weka:weka-dev:3.9.3'
+
     compile group: 'org.codehaus.janino', name: 'janino', version: '3.0.8'
     compile group: 'com.h2database', name: 'h2', version: '1.4.196'
     compileOnly ("org.projectlombok:lombok:1.16.16")

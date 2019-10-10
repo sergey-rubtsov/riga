@@ -16,6 +16,11 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.collection.Seq;
 import scala.collection.immutable.Set;
+import weka.core.Attribute;
+import weka.core.DenseInstance;
+import weka.core.Instance;
+import weka.core.Instances;
+import weka.core.neighboursearch.KDTree;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
@@ -492,8 +497,22 @@ public class Pipeline {
     /**
      * Try to use k-nearest neighbor or Hidden Markov Model or Delaunay triangulation
      */
-    private static void classifyTransportEventsUsingSchedule() {
+    private static void classifyTransportEventsUsingSchedule() throws Exception {
 
+        ArrayList<Attribute> coordinates = new ArrayList<>();
+        Attribute lon = new Attribute("lon");
+        Attribute lat = new Attribute("lan");
+        Instances instances = new Instances("coordinates", coordinates, 3);
+        Instance inst = new DenseInstance(2);
+        inst.setValue(lon, 1.0);
+        inst.setValue(lat, 1.0);
+        instances.add(inst);
+        KDTree knn = new KDTree(instances);
+        knn.nearestNeighbour(null);
+    }
+
+    public KDTree buildKDTree() {
+        return null;
     }
 
         //Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, trip, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
