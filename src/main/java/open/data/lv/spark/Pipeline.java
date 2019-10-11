@@ -154,6 +154,14 @@ public class Pipeline {
 
         Dataset<Row> stopTimes = readFiles(sqlContext, STOP_TIMES, "HH:mm:ss", null, ",");
         Dataset<Row> stops = readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
+        Dataset<Stop> coordinates = stops
+                .select(col("stop_id").as("id"),
+                        col("stop_lat").as("lat"),
+                        col("stop_lon").as("lon"))
+                .as(Encoders.bean(Stop.class));
+        List<Stop> points = coordinates.collectAsList();
+
+
         Dataset<Row> trips = readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
@@ -493,29 +501,6 @@ public class Pipeline {
                 .drop("VehicleMessageID");
     }
 
-
-    /**
-     * Try to use k-nearest neighbor or Hidden Markov Model or Delaunay triangulation
-     */
-    private static void classifyTransportEventsUsingSchedule() throws Exception {
-
-        ArrayList<Attribute> coordinates = new ArrayList<>();
-        Attribute lon = new Attribute("lon");
-        Attribute lat = new Attribute("lan");
-        Instances instances = new Instances("coordinates", coordinates, 3);
-        Instance inst = new DenseInstance(2);
-        inst.setValue(lon, 1.0);
-        inst.setValue(lat, 1.0);
-        instances.add(inst);
-        KDTree knn = new KDTree(instances);
-        knn.nearestNeighbour(null);
-    }
-
-    public KDTree buildKDTree() {
-        return null;
-    }
-
-        //Dataset<Row> breadCrumbs = sqlContext.sql("SELECT route, direction, stop_name, stop_id, trip, stop_sequence, stop_lat, stop_lon FROM bread_crumbs");
     private void proposeStopIdUsingCoordinateAndSchedule(Dataset<Row> breadCrumbs, Dataset<Row> events) {
         Dataset<Row> vehicles = events
                 .filter(col("event_source").eqNullSafe("vehicle"))
