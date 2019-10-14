@@ -1,23 +1,28 @@
 package open.data.lv.spark;
 
-
 import java.io.Serializable;
 
 public class Stop implements Serializable {
 
     private String id;
 
-    private float lat;
+    private double lat;
 
-    private float lon;
+    private double lon;
+
+    private String route;
+
+    private int dir;
 
     public Stop() {
     }
 
-    public Stop(String id, float lat, float lon) {
+    public Stop(String id, double lat, double lon, String route, int dir) {
         this.id = id;
         this.lat = lat;
         this.lon = lon;
+        this.route = route;
+        this.dir = dir;
     }
 
     public String getId() {
@@ -28,20 +33,35 @@ public class Stop implements Serializable {
         this.id = id;
     }
 
-    public float getLat() {
+    public double getLat() {
         return lat;
     }
 
-    public void setLat(float lat) {
+    public void setLat(double lat) {
         this.lat = lat;
     }
 
-    public float getLon() {
+    public double getLon() {
         return lon;
     }
 
-    public void setLon(float lon) {
+    public void setLon(double lon) {
         this.lon = lon;
     }
 
+    public String getRoute() {
+        return route;
+    }
+
+    public void setRoute(String route) {
+        this.route = route;
+    }
+
+    public int getDir() {
+        return dir;
+    }
+
+    public void setDir(int dir) {
+        this.dir = dir;
+    }
 }

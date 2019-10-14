@@ -1,4 +1,4 @@
-package open.data.lv.spark;
+package open.data.lv.spark.utils;
 
 import weka.core.Attribute;
 import weka.core.DenseInstance;
@@ -14,60 +14,67 @@ import java.util.ArrayList;
 public class KNNDemo {
 
     public KNNDemo() {
-        ArrayList<Double> d1 = new ArrayList<Double>();
-        d1.add(1.0);
-        d1.add(1.0);
+        ArrayList<Double> stop1 = new ArrayList<Double>();
+        stop1.add(1.0);
+        stop1.add(1.0);
 
-        ArrayList<Double> d2 = new ArrayList<Double>();
-        d2.add(4.0);
-        d2.add(4.0);
+        ArrayList<Double> stop2 = new ArrayList<Double>();
+        stop2.add(4.0);
+        stop2.add(4.0);
 
-        ArrayList<Double> d3 = new ArrayList<Double>();
-        d3.add(10.0);
-        d3.add(1.0);
+        ArrayList<Double> stop3 = new ArrayList<Double>();
+        stop3.add(10.0);
+        stop3.add(1.0);
 
         ArrayList<ArrayList<Double>> ar = new ArrayList<ArrayList<Double>>();
-        ar.add(d1);
-        ar.add(d2);
-        ar.add(d3);
+        ar.add(stop1);
+        ar.add(stop2);
+        ar.add(stop3);
 
         // attributes
-        Attribute a1 = new Attribute("x-attr", 0);
-        Attribute a2 = new Attribute("y-attr", 0);
+        Attribute lat = new Attribute("lat", 0);
+        Attribute lon = new Attribute("lon", 1);
         ArrayList<Attribute> attrs = new ArrayList<>();
-        attrs.add(a1);
-        attrs.add(a2);
+        attrs.add(lat);
+        attrs.add(lon);
 
         // instances
         Instances ds = new Instances("ds", attrs, 10);
-        for (ArrayList<Double> d : ar) { // iterate thro points
+        for (ArrayList<Double> d : ar) {
             Instance i = new DenseInstance(2);
-            i.setValue(a1, d.get(0)); // x
-            i.setValue(a2, d.get(1)); // y
+            i.setValue(lat, d.get(0)); // x
+            i.setValue(lon, d.get(1)); // y
             ds.add(i);
         }
 
-        Instance target = new DenseInstance(2);
-        target.setValue(a1, 3);
-        target.setValue(a2, 1);
+
         //KDTree knn = new KDTree(ds); // causes a runtime exception; requires setInstances() instead
         KDTree knn = new KDTree();
         try {
             knn.setInstances(ds);
+            //knn.getDistanceFunction();
         } catch (Exception e1) {
             // TODO Auto-generated catch block
             e1.printStackTrace();
         }
 
+
+        Instance target = new DenseInstance(2);
+        target.setValue(lat, 5);
+        target.setValue(lon, 2);
         Instances targetDs = new Instances("target", attrs, 1);
         targetDs.add(target);
 
         Instances nearestInstances;
         try {
-            nearestInstances = knn.kNearestNeighbours(targetDs.firstInstance(), 3);
+            nearestInstances = knn.kNearestNeighbours(targetDs.firstInstance(), 2);
+            //knn.setDistanceFunction();
+            //Instance i = knn.nearestNeighbour(target);
+            //System.out.println(i.value(a1));
+
             for (int i = 0; i < nearestInstances.numInstances(); i++) {
 
-                System.out.println(nearestInstances.instance(i).value(a1) + ", " + nearestInstances.instance(i).value(a2));
+                System.out.println(nearestInstances.instance(i).value(lat) + ", " + nearestInstances.instance(i).value(lon));
             }
         } catch (Exception e) {
             // TODO Auto-generated catch block

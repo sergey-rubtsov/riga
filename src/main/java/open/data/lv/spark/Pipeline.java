@@ -1,5 +1,6 @@
 package open.data.lv.spark;
 
+import open.data.lv.spark.kd.KDTreeClassifier;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
@@ -8,6 +9,7 @@ import org.apache.spark.ml.classification.NaiveBayes;
 import org.apache.spark.ml.classification.NaiveBayesModel;
 import org.apache.spark.ml.feature.VectorAssembler;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.api.java.UDF3;
 import org.apache.spark.sql.expressions.UserDefinedFunction;
 import org.apache.spark.sql.expressions.Window;
 import org.apache.spark.sql.expressions.WindowSpec;
@@ -154,18 +156,22 @@ public class Pipeline {
 
         Dataset<Row> stopTimes = readFiles(sqlContext, STOP_TIMES, "HH:mm:ss", null, ",");
         Dataset<Row> stops = readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
-        Dataset<Stop> coordinates = stops
-                .select(col("stop_id").as("id"),
-                        col("stop_lat").as("lat"),
-                        col("stop_lon").as("lon"))
-                .as(Encoders.bean(Stop.class));
-        List<Stop> points = coordinates.collectAsList();
 
 
         Dataset<Row> trips = readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
-        //Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
+        Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
+
+        Dataset<Stop> coordinates = regularRoutesFromSchedule
+                .select(col("route"),
+                        col("direction_id").as("dir"),
+                        col("stop_id").as("id"),
+                        col("stop_lat").as("lat"),
+                        col("stop_lon").as("lon"))
+                .as(Encoders.bean(Stop.class));
+        List<Stop> points = coordinates.collectAsList();
+        KDTreeClassifier kdTreeClassifier = new KDTreeClassifier(points);
 
         //Prepare test set
         Dataset<Row> tickets = readFiles(sqlContext, TICKET_VALIDATIONS_FILES, "dd.MM.yyyy HH:mm:ss", null, null);
@@ -175,7 +181,13 @@ public class Pipeline {
         Dataset<Row> validationEvents = prepareValidationEventsForJoin(tickets, routeMapping);
         Dataset<Row> transportEvents = prepareTransportEventsForJoin(vehicleMessages, eventTypes, vehicleAndCompanyMapping);
         Dataset<Row> events = unionDataSets(validationEvents, vehicleAndCompanyMapping, transportEvents, routeMapping);
-        //events = proposeCoordinateOfValidations(events);
+        events = events
+                .withColumn("nearest_stop_id", findNearestStopFunction(kdTreeClassifier)
+                .apply(col("route"),
+                        col("WGS84Fi"),
+                        col("WGS84La")));
+        events.select("route", "nearest_stop_id", "TripID", "WGS84Fi", "WGS84La", "timestamp").sort("route", "timestamp").show(2000);
+
         Dataset<Row> test = prepareTestDataset(events);
         test.show();
 
@@ -256,6 +268,7 @@ public class Pipeline {
     private static Dataset<Row> buildRegularRoutesFromSchedule(Dataset<Row> schedule) {
         return schedule.groupBy(
                 col("route"),
+                col("direction_id"),
                 col("numeric_route_id"),
                 col("direction"),
                 col("stop_name"),
@@ -374,6 +387,12 @@ public class Pipeline {
                 date_format(validationEvents.col("time_stamp"), "h:m:s a"))
                 .join(routeMapping, validationEvents.col("TMarsruts").equalTo(routeMapping.col("route")), "inner")
                 .drop("TMarsruts");
+    }
+
+    private static UserDefinedFunction findNearestStopFunction(KDTreeClassifier classifier) {
+        return udf(
+                (UDF3<String, Double, Double, Object>) classifier::findNearestNeighbourId, StringType
+        );
     }
 
     private static UserDefinedFunction mapGarageNumberFunction() {

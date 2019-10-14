@@ -1,5 +1,6 @@
-package open.data.lv.spark;
+package open.data.lv.spark.utils;
 
+import open.data.lv.spark.Stop;
 import weka.core.Attribute;
 import weka.core.DenseInstance;
 import weka.core.Instance;
@@ -43,7 +44,12 @@ public class KNNClassifier {
             instances.add(inst);
             inst.setDataset(instances);
         });
-        this.knn = new KDTree(instances);
+        this.knn = new KDTree();
+        try {
+            this.knn.setInstances(instances);
+        } catch (Exception e) {
+            throw new RuntimeException("unable to create classifier");
+        }
     }
 
     public String findNearestNeighbourId(float lat, float lon) {
