@@ -1,6 +1,7 @@
 package open.data.lv.spark;
 
-import open.data.lv.spark.kd.KDTreeClassifier;
+import open.data.lv.spark.kd.KDTreeStopClassifier;
+import open.data.lv.spark.utils.DatasetReader;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
@@ -18,18 +19,12 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.collection.Seq;
 import scala.collection.immutable.Set;
-import weka.core.Attribute;
-import weka.core.DenseInstance;
-import weka.core.Instance;
-import weka.core.Instances;
-import weka.core.neighboursearch.KDTree;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -92,40 +87,6 @@ public class Pipeline {
         ROUTE_TYPES = "real/GTFS/route_types.txt";
     }
 
-    private static Dataset<Row> readFiles(SQLContext sqlContext,
-                                          String file,
-                                          String dateFormat,
-                                          String nullValue,
-                                          String delimiter) {
-        ClassLoader classLoader = Pipeline.class.getClassLoader();
-        DataFrameReader reader = sqlContext.read().option("inferSchema", "true").option("header", "true");
-        if (!Objects.isNull(nullValue)) {
-            reader = reader.option("nullValue", nullValue);
-        }
-        if (!Objects.isNull(delimiter)) {
-            reader = reader.option("delimiter", delimiter);
-        }
-        if (!Objects.isNull(dateFormat)) {
-            reader = reader.option("dateFormat", dateFormat);
-        }
-        return reader
-                .csv(Objects.requireNonNull(classLoader.getResource(file)).getPath());
-    }
-
-    private static Dataset<Row> readFiles(SQLContext sqlContext,
-                                          List<String> files,
-                                          String dateFormat,
-                                          String nullValue,
-                                          String delimiter) {
-        Dataset<Row> result = readFiles(sqlContext, files.get(0), dateFormat, nullValue, delimiter);
-        if (files.size() > 1) {
-            for (int i = 1; i < files.size(); i++) {
-                result = result.union(readFiles(sqlContext, files.get(i), dateFormat, nullValue, delimiter));
-            }
-        }
-        return result;
-    }
-
     public static void main(String[] args) {
         System.setProperty("hadoop.home.dir", System.getProperty("user.dir") + "\\hadoop");
         System.setProperty("SPARK_CONF_DIR", System.getProperty("user.dir") + "\\conf");
@@ -150,15 +111,13 @@ public class Pipeline {
         sqlContext.setConf("spark.sql.caseSensitive", "true");
         initPipelineParameters();
         //Prepare training set
-        Dataset<Row> routes = readFiles(sqlContext, ROUTES, "HH:mm:ss", null, ",");
-        Dataset<Row> routeTypes = readFiles(sqlContext, ROUTE_TYPES, "HH:mm:ss", null, ",");
+        Dataset<Row> routes = DatasetReader.readFiles(sqlContext, ROUTES, "HH:mm:ss", null, ",");
+        Dataset<Row> routeTypes = DatasetReader.readFiles(sqlContext, ROUTE_TYPES, "HH:mm:ss", null, ",");
         Dataset<Row> routeMapping = buildRouteMapping(routes, routeTypes);
+        Dataset<Row> stopTimes = DatasetReader.readFiles(sqlContext, STOP_TIMES, "HH:mm:ss", null, ",");
+        Dataset<Row> stops = DatasetReader.readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
 
-        Dataset<Row> stopTimes = readFiles(sqlContext, STOP_TIMES, "HH:mm:ss", null, ",");
-        Dataset<Row> stops = readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
-
-
-        Dataset<Row> trips = readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
+        Dataset<Row> trips = DatasetReader.readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
@@ -171,56 +130,28 @@ public class Pipeline {
                         col("stop_lon").as("lon"))
                 .as(Encoders.bean(Stop.class));
         List<Stop> points = coordinates.collectAsList();
-        KDTreeClassifier kdTreeClassifier = new KDTreeClassifier(points);
+        KDTreeStopClassifier kdTreeStopClassifier = new KDTreeStopClassifier(points);
 
         //Prepare test set
-        Dataset<Row> tickets = readFiles(sqlContext, TICKET_VALIDATIONS_FILES, "dd.MM.yyyy HH:mm:ss", null, null);
-        Dataset<Row> vehicleMessages = readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", null); //real delimeter is ;
-        Dataset<Row> vehicleAndCompanyMapping = readFiles(sqlContext, VEHICLE_MAPPING_FILE, null, null, ";");
-        Dataset<Row> eventTypes = readFiles(sqlContext, MESSAGE_TYPE_FILE, null, null, ";");
+        Dataset<Row> tickets = DatasetReader.readFiles(sqlContext, TICKET_VALIDATIONS_FILES, "dd.MM.yyyy HH:mm:ss", null, null);
+        Dataset<Row> vehicleMessages = DatasetReader.readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", null); //real delimeter is ;
+        Dataset<Row> vehicleAndCompanyMapping = DatasetReader.readFiles(sqlContext, VEHICLE_MAPPING_FILE, null, null, ";");
+        Dataset<Row> eventTypes = DatasetReader.readFiles(sqlContext, MESSAGE_TYPE_FILE, null, null, ";");
         Dataset<Row> validationEvents = prepareValidationEventsForJoin(tickets, routeMapping);
         Dataset<Row> transportEvents = prepareTransportEventsForJoin(vehicleMessages, eventTypes, vehicleAndCompanyMapping);
-        Dataset<Row> events = unionDataSets(validationEvents, vehicleAndCompanyMapping, transportEvents, routeMapping);
+        Dataset<Row> events = unionDataSets(validationEvents, vehicleAndCompanyMapping, transportEvents);
         events = events
-                .withColumn("nearest_stop_id", findNearestStopFunction(kdTreeClassifier)
+                .withColumn("nearest_stop_id", findNearestStopFunction(kdTreeStopClassifier)
                 .apply(col("route"),
                         col("WGS84Fi"),
                         col("WGS84La")));
-        events.select("route", "nearest_stop_id", "TripID", "WGS84Fi", "WGS84La", "timestamp").sort("route", "timestamp").show(2000);
-
-        Dataset<Row> test = prepareTestDataset(events);
-        test.show();
-
-        //Train
-        Dataset<Row> train = prepareTrainDataset(dailySchedule);
-        // create the trainer and set its parameters
-        NaiveBayes nb = new NaiveBayes();
-        VectorAssembler assembler = new VectorAssembler().setInputCols(new String[]{
-                "numeric_route_id",
-                "stop_lat",
-                "stop_lon",
-                "next_stop_lat",
-                "previous_stop_lon",
-                "next_stop_lat",
-                "previous_stop_lon",
-                "timestamp",
-                "next_timestamp",
-                "previous_timestamp"})
-                .setOutputCol("features");
-        Dataset<Row> features = assembler.setHandleInvalid("skip").transform(train);
-        //Dataset<Row> regularRoutes = buildRegularRoutesFromSchedule(dailySchedule);
-        Dataset<Row> unpredicted = assembler.setHandleInvalid("skip").transform(test);
-        unpredicted = unpredicted.limit(30);
-        // Train the model
-        NaiveBayesModel model = nb.fit(features);
-        // Predict
-        Dataset<Row> predictions = model.transform(unpredicted);
-
-        predictions = predictions.join(train,
-                predictions.col("prediction").equalTo(train.col("label")),
-                "inner");
-
-        predictions.show(30);
+        events = events
+                .withColumn("euclidean_nearest_stop_id", findNearestStopFunction(kdTreeStopClassifier)
+                        .apply(col("route"),
+                                col("WGS84Fi"),
+                                col("WGS84La")));
+        events.show(200);
+        prepareTestDataset(events).orderBy(col("TripID"), col("timestamp")).show(100);
         spark.stop();
     }
 
@@ -232,22 +163,23 @@ public class Pipeline {
                         col("numeric_route_id"));
     }
 
-    /**
-     * +-----+---------+----------------+-----+---------+------+---------+--------+--------+------------+-------------+----------+----------+-------------------+----------------------------+----------------+
-     * |route|VehicleID|VehicleMessageID|GarNr|direction|TripID|     Code| WGS84Fi| WGS84La|event_source|ValidTalonaId|      time|      date|          timestamp|timestamp_of_transport_event|numeric_route_id|
-     * +-----+---------+----------------+-----+---------+------+---------+--------+--------+------------+-------------+----------+----------+-------------------+----------------------------+----------------+
-     * | A 30|      273|       868734338| 6251|     null|408311|DoorsOpen|56.97037| 24.0312|     vehicle|         null|5:28:38 AM|2018-11-23|2018-11-23 05:28:38|         2018-11-23 05:28:38|              28|
-     */
+
     private static Dataset<Row> prepareTestDataset(Dataset<Row> events) {
-        events = events.filter(col("event_source").equalTo("vehicle"))
-                .drop("timestamp")
+        return events.filter(col("event_source").equalTo("vehicle"))
                 .withColumnRenamed("WGS84La","stop_lon")
-                .withColumnRenamed("WGS84Fi","stop_lat");
-        events = events
+                .withColumnRenamed("WGS84Fi","stop_lat")
                 .withColumn("timestamp", hour(col("timestamp_of_transport_event"))
                 .multiply(60)
-                .plus(minute(col("timestamp_of_transport_event"))));
-        WindowSpec ws = Window
+                .plus(minute(col("timestamp_of_transport_event"))))
+                .groupBy(col("TripID"))
+                .agg(
+                        first(col("route")).as("route"),
+                        first(col("nearest_stop_id")).as("nearest_stop_id"),
+                        first(col("stop_lat")).as("stop_lat"),
+                        first(col("stop_lon")).as("stop_lon"),
+                        first(col("timestamp")).as("timestamp"))
+                .orderBy(col("timestamp"));
+/*        WindowSpec ws = Window
                 .partitionBy(events.col("TripID"))
                 .orderBy(events.col("time"));
         return events
@@ -256,7 +188,7 @@ public class Pipeline {
                 .withColumn("previous_stop_lat", lag(col("stop_lat"), 1, IMPOSSIBLE_COORDINATE).over(ws))
                 .withColumn("previous_stop_lon", lag(col("stop_lon"), 1, IMPOSSIBLE_COORDINATE).over(ws))
                 .withColumn("next_timestamp", lag(col("timestamp"), -1, IMPOSSIBLE_TIME).over(ws))
-                .withColumn("previous_timestamp", lag(col("timestamp"), 1, IMPOSSIBLE_TIME).over(ws));
+                .withColumn("previous_timestamp", lag(col("timestamp"), 1, IMPOSSIBLE_TIME).over(ws));*/
     }
 
     /**
@@ -364,12 +296,6 @@ public class Pipeline {
                 date_format(transportEvents.col("SentDate"), "h:m:s a"));
     }
 
-    /**
-     * +--------+-------------+-----+-------------------+----------+----------+-----+----------------+
-     * |Virziens|ValidTalonaId|GarNr|         time_stamp|      date|      time|route|numeric_route_id|
-     * +--------+-------------+-----+-------------------+----------+----------+-----+----------------+
-     * |    Back|            2| 6251|2018-11-23 16:29:34|2018-11-23|4:29:34 PM| A 30|              28|
-     */
     private static Dataset<Row> prepareValidationEventsForJoin(Dataset<Row> tickets, Dataset<Row> routeMapping) {
         Dataset<Row> validationEvents = tickets.select(
                 col("GarNr").as("GN"),
@@ -389,7 +315,13 @@ public class Pipeline {
                 .drop("TMarsruts");
     }
 
-    private static UserDefinedFunction findNearestStopFunction(KDTreeClassifier classifier) {
+    private static UserDefinedFunction findNearestStopFunction(KDTreeStopClassifier classifier) {
+        return udf(
+                (UDF3<String, Double, Double, Object>) classifier::findNearestNeighbourId, StringType
+        );
+    }
+
+    private static UserDefinedFunction findNearestUsingEuclideanFunction(KDTreeStopClassifier classifier) {
         return udf(
                 (UDF3<String, Double, Double, Object>) classifier::findNearestNeighbourId, StringType
         );
@@ -415,8 +347,7 @@ public class Pipeline {
 
     private static Dataset<Row> unionDataSets(Dataset<Row> validations,
                                               Dataset<Row> companyMapping,
-                                              Dataset<Row> vehicle,
-                                              Dataset<Row> routeMapping) {
+                                              Dataset<Row> vehicle) {
         Dataset<Row> vehiclesOnRoute = validations.join(companyMapping,
                 validations.col("GarNr").equalTo(companyMapping.col("VehicleCompanyCode")),
                 "inner")

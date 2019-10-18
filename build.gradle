@@ -58,7 +58,8 @@ dependencies {
 
     compile 'nz.ac.waikato.cms.weka:weka-dev:3.9.3'
 
-    //compile group: 'net.sf', name: 'javaml', version: '0.1.7'
+    //this is for time series with 1 dimension
+    compile group: 'com.github.davidmoten', name: 'fastdtw', version: '0.1'
 
     compile group: 'org.codehaus.janino', name: 'janino', version: '3.0.8'
     compile group: 'com.h2database', name: 'h2', version: '1.4.196'

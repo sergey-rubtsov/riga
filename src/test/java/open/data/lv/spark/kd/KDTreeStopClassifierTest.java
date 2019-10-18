@@ -8,7 +8,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 
-public class KDTreeClassifierTest {
+public class KDTreeStopClassifierTest {
 
     @Test
     public void findNearestNeighbourId() {
@@ -21,8 +21,8 @@ public class KDTreeClassifierTest {
         stops.add(second);
         stops.add(third);
         stops.add(fourth);
-        KDTreeClassifier classifier = new KDTreeClassifier(stops);
-        String id = classifier.findNearestNeighbourId("A 1", 0.1, 6);
+        KDTreeStopClassifier classifier = new KDTreeStopClassifier(stops);
+        String id = classifier.findNearestNeighbourId("A 1", 0.1, 6.0);
         assertEquals("third", id);
     }
 }
