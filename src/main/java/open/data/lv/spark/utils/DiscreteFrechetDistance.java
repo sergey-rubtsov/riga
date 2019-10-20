@@ -94,7 +94,10 @@ public class DiscreteFrechetDistance {
         timeSeriesQ.add(p1);
         timeSeriesQ.add(p2);
         timeSeriesQ.add(p3);
-        timeSeriesQ.add(new Point(new double[]{2.0, 3.0}));
+        timeSeriesQ.add(p3);
+        timeSeriesQ.add(p3);
+        timeSeriesQ.add(p3);
+        timeSeriesQ.add(p4);
         startTime = System.currentTimeMillis();
         res = computeDiscreteFrechet(timeSeriesP, timeSeriesQ);
         runTime = System.currentTimeMillis() - startTime;
