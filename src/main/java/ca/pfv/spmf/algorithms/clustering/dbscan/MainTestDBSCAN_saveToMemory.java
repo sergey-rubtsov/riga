@@ -44,8 +44,7 @@ public class MainTestDBSCAN_saveToMemory {
 	}
 	
 	public static String fileToPath(String filename) throws UnsupportedEncodingException{
-		URL url = MainTestDBSCAN_saveToMemory.class.getResource(filename);
-		 return java.net.URLDecoder.decode(url.getPath(),"UTF-8");
+		return java.net.URLDecoder.decode(MainTestDBSCAN_saveToMemory.class.getClassLoader().getResource(filename).getPath(),"UTF-8");
 	}
 	
 	
