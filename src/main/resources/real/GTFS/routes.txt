@@ -17,7 +17,6 @@ riga_bus_14,"14","Abrenes iela - Zvēraudzētava",,3,https://saraksti.rigassatik
 riga_bus_15,"15","Dārziņi - Jugla",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/15,F4B427,FFFFFF
 riga_bus_16,"16","Abrenes iela - Papīrfabrika ""Jugla""",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/16,F4B427,FFFFFF
 riga_bus_18,"18","Abrenes iela - Dārziņi",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/18,F4B427,FFFFFF
-riga_bus_19,"19","Mežciems - Bukulti - Sarkandaugava",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/19,F4B427,FFFFFF
 riga_bus_20,"20","Pētersalas iela - Pļavnieku kapi",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/20,F4B427,FFFFFF
 riga_bus_21,"21","Imanta - Jugla",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/21,F4B427,FFFFFF
 riga_bus_22,"22","Abrenes iela - Lidosta",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/22,F4B427,FFFFFF
@@ -25,8 +24,8 @@ riga_bus_23,"23","Abrenes iela - Baloži",,3,https://saraksti.rigassatiksme.lv/i
 riga_bus_24,"24","Abrenes iela - Mangaļsala",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/24,F4B427,FFFFFF
 riga_bus_25,"25","Abrenes iela - Mārupe",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/25,F4B427,FFFFFF
 riga_bus_26,"26","Abrenes iela - Katlakalns",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/26,F4B427,FFFFFF
-riga_bus_28,"28","Jugla - Langstiņi",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/28,F4B427,FFFFFF
-riga_bus_29,"29","Mežciems - Vecmīlgrāvis",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/29,F4B427,FFFFFF
+riga_bus_28,"28","Jugla  - Langstiņi",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/28,F4B427,FFFFFF
+riga_bus_29,"29","Mežciems - Bukulti - Vecmīlgrāvis",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/29,F4B427,FFFFFF
 riga_bus_30,"30","Centrālā stacija - Daugavgrīva",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/30,F4B427,FFFFFF
 riga_bus_31,"31","Dārziņi - Jugla",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/31,F4B427,FFFFFF
 riga_bus_32,"32","Abrenes iela - Piņķi",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/32,F4B427,FFFFFF
@@ -41,7 +40,7 @@ riga_bus_41,"41","Esplanāde - Imanta",,3,https://saraksti.rigassatiksme.lv/inde
 riga_bus_43,"43","Abrenes iela - Skulte",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/43,F4B427,FFFFFF
 riga_bus_44,"44","Ziepniekkalns - Zolitūde",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/44,F4B427,FFFFFF
 riga_bus_46,"46","Ziepniekkalns - Zolitūde",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/46,F4B427,FFFFFF
-riga_bus_47,"47","Abrenes iela - Šķirotava",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/47,F4B427,FFFFFF
+riga_bus_47,"47","Abrenes iela - Šķirotava - Getliņi",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/47,F4B427,FFFFFF
 riga_bus_48,"48","Pļavnieku  kapi - Sarkandaugava",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/48,F4B427,FFFFFF
 riga_bus_49,"49","MAN TESS - Rumbula",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/49,F4B427,FFFFFF
 riga_bus_50,"50","Abrenes iela - TEC 2",,3,https://saraksti.rigassatiksme.lv/index.html#riga/bus/50,F4B427,FFFFFF

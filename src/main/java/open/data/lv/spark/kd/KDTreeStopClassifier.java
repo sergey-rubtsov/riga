@@ -3,12 +3,10 @@ package open.data.lv.spark.kd;
 import open.data.lv.spark.Stop;
 
 import java.io.Serializable;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 import static java.lang.Math.pow;
 import static java.lang.Math.sqrt;
@@ -41,7 +39,7 @@ public class KDTreeStopClassifier implements Serializable {
         return null;
     }
 
-    public String findNearestUsingEuclidean(String route, Double lat, Double lon) {
+    public String findNearestAndThenNearestButInAnotherDirectionId(String route, Double lat, Double lon) {
         if (route == null || lat == null || lon == null) {
             return null;
         }
@@ -49,15 +47,22 @@ public class KDTreeStopClassifier implements Serializable {
             double[] key = new double[2];
             key[0] = lat;
             key[1] = lon;
-            Object[] found = routes.get(route).nearest(key, 3);
-            return closest(lat, lon, (Stop[]) found).getId();
+            KDTree routeTree = routes.get(route);
+            int dir = ((Stop)routeTree.nearest(key)).getDir();
+            for (int i = 2; i < routeTree.getNodesCount(); i++) {
+                Object[] found = routeTree.nearest(key, i);
+                for (Object stop : found) {
+                    if (((Stop)stop).getDir() != dir) {
+                        return ((Stop)stop).getId();
+                    }
+                }
+            }
         }
         return null;
     }
 
-    private Stop closest(Double lat, Double lon, Stop[] stops) {
-        Stream<Stop> stream = Arrays.stream(stops);
-        return stream.min(Comparator.comparing(stop -> calculateDistance(lat, lon, stop))).orElse(stops[0]);
+    public Stop closest(Double lat, Double lon, List<Stop> stops) {
+        return stops.stream().min(Comparator.comparing(stop -> calculateDistance(lat, lon, stop))).orElse(stops.get(0));
     }
 
     //Since the distance is relatively small, we can use the rectangular distance approximation using formula
@@ -69,4 +74,25 @@ public class KDTreeStopClassifier implements Serializable {
         return sqrt(pow((stop.getLat() - lat) * 111.3, 2) + pow((stop.getLon() - lon) * 60.8, 2));
     }
 
+    public String findNearestNeighbourIdOnSameDirection(String route, Double lat, Double lon) {
+        if (route == null || lat == null || lon == null) {
+            return null;
+        }
+        if (routes.containsKey(route)) {
+            double[] key = new double[2];
+            key[0] = lat;
+            key[1] = lon;
+            KDTree routeTree = routes.get(route);
+            int dir = ((Stop)routeTree.nearest(key)).getDir();
+            for (int i = 2; i < routeTree.getNodesCount(); i++) {
+                Object[] found = routeTree.nearest(key, i);
+                for (Object stop : found) {
+                    if (((Stop)stop).getDir() == dir) {
+                        return ((Stop)stop).getId();
+                    }
+                }
+            }
+        }
+        return null;
+    }
 }
