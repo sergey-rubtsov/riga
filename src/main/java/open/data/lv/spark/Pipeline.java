@@ -38,9 +38,10 @@ import static org.apache.spark.sql.functions.first;
 import static org.apache.spark.sql.functions.lag;
 import static org.apache.spark.sql.functions.last;
 import static org.apache.spark.sql.functions.lit;
-import static org.apache.spark.sql.functions.max;
 import static org.apache.spark.sql.functions.min;
 import static org.apache.spark.sql.functions.monotonically_increasing_id;
+import static org.apache.spark.sql.functions.pow;
+import static org.apache.spark.sql.functions.sqrt;
 import static org.apache.spark.sql.functions.trim;
 import static org.apache.spark.sql.functions.udf;
 import static org.apache.spark.sql.functions.when;
@@ -175,6 +176,38 @@ public class Pipeline {
         predicted.orderBy("ValidTalonaId", "timestamp").repartition(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
         spark.stop();
+    }
+
+    private static Dataset<Row> postProcessExits(Dataset<Row> exits) {
+        exits = exits.groupBy("ValidTalonaId", "timestamp")
+                .agg(first(col("stop_id")).as("stop_id"),
+                        first(col("exit_stop_id")).as("exit_stop_id"),
+                        first(col("TripID")).as("TripID"),
+                        first(col("route")).as("route"),
+                        first(col("GarNr")).as("GarNr"),
+                        first(col("stop_lat")).as("stop_lat"),
+                        first(col("stop_lon")).as("stop_lon"),
+                        min(col("exit_timestamp")).as("exit_timestamp"),
+                        first(col("exit_stop_name")).as("exit_stop_name"),
+                        first(col("exit_stop_lat")).as("exit_stop_lat"),
+                        first(col("exit_stop_lon")).as("exit_stop_lon"),
+                        first(col("stop_name")).as("stop_name"));
+
+        return exits
+                .orderBy("ValidTalonaId", "timestamp");
+    }
+
+    private static Dataset<Row> calculateEuclideanDistanceBetweenExitAndEnter(Dataset<Row> exits) {
+        WindowSpec ws = Window
+                .partitionBy(exits.col("ValidTalonaId"))
+                .orderBy(exits.col("timestamp"));
+        return exits
+                //.withColumn("number_of_transaction", row_number().over(ws))
+                .withColumn("distance_between_exit_and_enter",
+                        sqrt(pow((exits.col("exit_stop_lat")
+                                .minus(lag(col("stop_lat"), -1, null).over(ws)).multiply(111.3)), 2).
+                                plus(pow((exits.col("exit_stop_lon")
+                                        .minus(lag(col("stop_lon"), -1, null).over(ws)).multiply(60.8)), 2))));
     }
 
     private static Dataset<Row> predictExitsForTwoOrMoreTransactions(Dataset<Row> enters,
