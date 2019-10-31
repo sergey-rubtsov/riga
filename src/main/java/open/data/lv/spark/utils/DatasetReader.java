@@ -16,8 +16,22 @@ public class DatasetReader {
                                          String dateFormat,
                                          String nullValue,
                                          String delimiter) {
+        return readFiles(sqlContext, file, dateFormat, nullValue, delimiter, true);
+    }
+
+    public static Dataset<Row> readFiles(SQLContext sqlContext,
+                                         String file,
+                                         String dateFormat,
+                                         String nullValue,
+                                         String delimiter,
+                                         Boolean header) {
         ClassLoader classLoader = Pipeline.class.getClassLoader();
-        DataFrameReader reader = sqlContext.read().option("inferSchema", "true").option("header", "true");
+        DataFrameReader reader = sqlContext.read().option("inferSchema", "true");
+        if (!Objects.isNull(header)) {
+            reader = reader.option("header", header.toString());
+        } else {
+            reader = reader.option("header", "true");
+        }
         if (!Objects.isNull(nullValue)) {
             reader = reader.option("nullValue", nullValue);
         }

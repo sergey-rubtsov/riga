@@ -67,6 +67,10 @@ public class Pipeline {
 
     private static String TRIPS;
 
+    private static String SWARCO_TRIPS_MATCHING;
+
+    private static String SWARCO_SCHEDULE_MATCHING;
+
     private static String ROUTE_TYPES;
 
     private static void initPipelineParameters() {
@@ -81,6 +85,9 @@ public class Pipeline {
         STOPS = "real/GTFS/stops.txt";
         TRIPS = "real/GTFS/trips.txt";
         ROUTE_TYPES = "real/GTFS/route_types.txt";
+
+        SWARCO_TRIPS_MATCHING = "real/transiti_v3.dta";
+        SWARCO_SCHEDULE_MATCHING = "real/Trips.csv";
     }
 
     public static void main(String[] args) {
@@ -112,6 +119,36 @@ public class Pipeline {
         Dataset<Row> stops = DatasetReader.readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
 
         Dataset<Row> trips = DatasetReader.readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
+
+        Dataset<Row> swarcoTripsMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIPS_MATCHING, "HH:mm:ss", "", "|", false);
+        Dataset<Row> swarcoScheduleMatching = DatasetReader.readFiles(sqlContext, SWARCO_SCHEDULE_MATCHING, null, null, ";");
+        Dataset<Row> matching = swarcoTripsMatching.toDF("number",
+                "block_id",
+                "stage_id",
+                "not_used_0",
+                "not_used_1",
+                "arrival_time",
+                "not_used_2",
+                "not_used_3",
+                "direction_id",
+                "TripCompanyCode",
+                "empty")
+                .select(col("block_id"),
+                        col("arrival_time"),
+                        col("TripCompanyCode"))
+                .join(trips.select(
+                        col("direction_id"),
+                        col("block_id"),
+                        col("route_id"),
+                        col("trip_id")),
+                        new Set.Set1<>("block_id").toSeq(),
+                        "left")
+                .join(stopTimes.select(col("trip_id"), col("arrival_time")).groupBy("trip_id").agg(first(col("arrival_time"))),
+                        new Set.Set1<>("trip_id").toSeq(), "left");/*
+                .join(swarcoScheduleMatching,
+                        new Set.Set1<>("TripCompanyCode").toSeq(),
+                        "left")*/;
+        matching.show(200);
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
