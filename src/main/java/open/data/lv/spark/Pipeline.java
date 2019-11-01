@@ -69,13 +69,13 @@ public class Pipeline {
 
     private static String SWARCO_TRIPS_MATCHING;
 
-    private static String SWARCO_SCHEDULE_MATCHING;
+    private static String SWARCO_TRIP_COMPANY_MATCHING;
 
     private static String ROUTE_TYPES;
 
     private static void initPipelineParameters() {
         VEHICLE_MAPPING_FILE = "real/Vehicles.csv";
-        MESSAGE_TYPE_FILE ="real/SendingReasons.csv";
+        MESSAGE_TYPE_FILE ="real/SendingReason.csv";
         TICKET_VALIDATIONS_FILES.add("real/ValidDati25_09_19.txt");
         VEHICLE_MESSAGES_FILES.add("real/VehicleMessages20190925d1.csv");
         VEHICLE_MESSAGES_FILES.add("real/VehicleMessages20190925d2.csv");
@@ -87,7 +87,7 @@ public class Pipeline {
         ROUTE_TYPES = "real/GTFS/route_types.txt";
 
         SWARCO_TRIPS_MATCHING = "real/transiti_v3.dta";
-        SWARCO_SCHEDULE_MATCHING = "real/Trips.csv";
+        SWARCO_TRIP_COMPANY_MATCHING = "real/Trips.csv";
     }
 
     public static void main(String[] args) {
@@ -121,21 +121,24 @@ public class Pipeline {
         Dataset<Row> trips = DatasetReader.readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
 
         Dataset<Row> swarcoTripsMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIPS_MATCHING, "HH:mm:ss", "", "|", false);
-        Dataset<Row> swarcoScheduleMatching = DatasetReader.readFiles(sqlContext, SWARCO_SCHEDULE_MATCHING, null, null, ";");
-        Dataset<Row> matching = swarcoTripsMatching.toDF("number",
-                "block_id",
-                "stage_id",
-                "not_used_0",
-                "not_used_1",
-                "arrival_time",
-                "not_used_2",
-                "not_used_3",
-                "direction_id",
-                "TripCompanyCode",
-                "empty")
-                .select(col("block_id"),
-                        col("arrival_time"),
-                        col("TripCompanyCode"))
+
+        Dataset<Row> vehicleMessages = DatasetReader.readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", ";");
+        Dataset<Row> swarcoTripCompanyMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIP_COMPANY_MATCHING, null, null, ";");
+        vehicleMessages = vehicleMessages.join(swarcoTripCompanyMatching, new Set.Set1<>("TripID").toSeq(),"left")
+                .join(swarcoTripsMatching.toDF("number",
+                        "block_id",
+                        "stage_id",
+                        "not_used_0",
+                        "not_used_1",
+                        "arrival_time",
+                        "not_used_2",
+                        "not_used_3",
+                        "direction_id",
+                        "TripCompanyCode",
+                        "empty")
+                        .select(col("block_id"),
+                                col("TripCompanyCode")).dropDuplicates(),
+                        new Set.Set1<>("TripCompanyCode").toSeq(),"left")
                 .join(trips.select(
                         col("direction_id"),
                         col("block_id"),
@@ -143,12 +146,7 @@ public class Pipeline {
                         col("trip_id")),
                         new Set.Set1<>("block_id").toSeq(),
                         "left")
-                .join(stopTimes.select(col("trip_id"), col("arrival_time")).groupBy("trip_id").agg(first(col("arrival_time"))),
-                        new Set.Set1<>("trip_id").toSeq(), "left");/*
-                .join(swarcoScheduleMatching,
-                        new Set.Set1<>("TripCompanyCode").toSeq(),
-                        "left")*/;
-        matching.show(200);
+                .orderBy("VehicleID", "SentDate", "TripID");
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
@@ -164,7 +162,7 @@ public class Pipeline {
         KDTreeStopClassifier kdTreeStopClassifier = new KDTreeStopClassifier(points);
 
         Dataset<Row> tickets = DatasetReader.readFiles(sqlContext, TICKET_VALIDATIONS_FILES, "dd.MM.yyyy HH:mm:ss", null, null);
-        Dataset<Row> vehicleMessages = DatasetReader.readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", ";"); //real delimeter is ;
+
         Dataset<Row> vehicleAndCompanyMapping = DatasetReader.readFiles(sqlContext, VEHICLE_MAPPING_FILE, null, null, ";");
         Dataset<Row> eventTypes = DatasetReader.readFiles(sqlContext, MESSAGE_TYPE_FILE, null, null, ";");
         Dataset<Row> validationEvents = prepareValidationEventsForJoin(tickets, routeMapping);
@@ -189,6 +187,9 @@ public class Pipeline {
                 .withColumn("TripID",
                         coalesce(col("TripID"), last(events.col("TripID"), true).over(ws)))
         .drop("WGS84Fi", "WGS84La", "nearest_stop_id");
+        //
+        events.orderBy(col("GarNr"), col("timestamp")).show(1000);
+
         Dataset<Row> predicted = predictExitsForTwoOrMoreTransactions(events, kdTreeStopClassifier);
         events = events.withColumnRenamed("timestamp", "exit_timestamp")
                 .select(
@@ -352,7 +353,10 @@ public class Pipeline {
                         col("SentDate"),
                         col("Code"),
                         col("WGS84Fi"),
-                        col("WGS84La"));
+                        col("WGS84La"),
+                        col("direction_id").as("hdi"),
+                        col("route_id").as("hri"),
+                        col("trip_id").as("hti"));
         //filter open doors only and broken data
         transportEvents = transportEvents
                 .filter(transportEvents.col("Code").equalTo("DoorsOpen")
