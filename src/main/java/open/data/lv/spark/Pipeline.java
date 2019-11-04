@@ -137,7 +137,8 @@ public class Pipeline {
                         "TripCompanyCode",
                         "empty")
                         .select(col("block_id"),
-                                col("TripCompanyCode")).dropDuplicates(),
+                                col("TripCompanyCode"),
+                                col("arrival_time")).dropDuplicates(),
                         new Set.Set1<>("TripCompanyCode").toSeq(),"left")
                 .join(trips.select(
                         col("direction_id"),
@@ -146,7 +147,21 @@ public class Pipeline {
                         col("trip_id")),
                         new Set.Set1<>("block_id").toSeq(),
                         "left")
+                .join(stopTimes.select(
+                        col("trip_id"),
+                        col("arrival_time"),
+                        col("departure_time"),
+                        col("stop_id"),
+                        col("stop_sequence")),
+                        new Set.Set1<>("trip_id").toSeq(),
+                        "left").
+                where(
+                        col("arrival_time")
+                                .lt(col("departure_time")).and(col("arrival_time")
+                                .gt(col("arrival_time_time"))))
                 .orderBy("VehicleID", "SentDate", "TripID");
+        vehicleMessages.repartition(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
