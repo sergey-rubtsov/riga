@@ -130,7 +130,7 @@ public class Pipeline {
                         "stage_id",
                         "not_used_0",
                         "not_used_1",
-                        "arrival_time",
+                        "planned_time",
                         "not_used_2",
                         "not_used_3",
                         "direction_id",
@@ -138,7 +138,7 @@ public class Pipeline {
                         "empty")
                         .select(col("block_id"),
                                 col("TripCompanyCode"),
-                                col("arrival_time")).dropDuplicates(),
+                                col("planned_time")).dropDuplicates(),
                         new Set.Set1<>("TripCompanyCode").toSeq(),"left")
                 .join(trips.select(
                         col("direction_id"),
@@ -148,17 +148,16 @@ public class Pipeline {
                         new Set.Set1<>("block_id").toSeq(),
                         "left")
                 .join(stopTimes.select(
-                        col("trip_id"),
+                        col("trip_id").as("stops_trip_id"),
                         col("arrival_time"),
                         col("departure_time"),
                         col("stop_id"),
                         col("stop_sequence")),
-                        new Set.Set1<>("trip_id").toSeq(),
-                        "left").
-                where(
-                        col("arrival_time")
-                                .lt(col("departure_time")).and(col("arrival_time")
-                                .gt(col("arrival_time_time"))))
+                        col("trip_id").equalTo(col("stops_trip_id")).and(
+                        col("planned_time").lt(col("departure_time"))
+                                .and(col("planned_time")
+                                .gt(col("arrival_time")))),
+                        "left")
                 .orderBy("VehicleID", "SentDate", "TripID");
         vehicleMessages.repartition(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
