@@ -65,6 +65,8 @@ public class Pipeline {
 
     private static String STOPS;
 
+    private static String SHAPES;
+
     private static String TRIPS;
 
     private static String SWARCO_TRIPS_MATCHING;
@@ -83,6 +85,7 @@ public class Pipeline {
         ROUTES = "real/GTFS/routes.txt";
         STOP_TIMES = "real/GTFS/stop_times.txt";
         STOPS = "real/GTFS/stops.txt";
+        SHAPES = "real/GTFS/shapes.txt";
         TRIPS = "real/GTFS/trips.txt";
         ROUTE_TYPES = "real/GTFS/route_types.txt";
 
@@ -117,15 +120,18 @@ public class Pipeline {
         Dataset<Row> routeMapping = buildRouteMapping(routes, routeTypes);
         Dataset<Row> stopTimes = DatasetReader.readFiles(sqlContext, STOP_TIMES, "HH:mm:ss", null, ",");
         Dataset<Row> stops = DatasetReader.readFiles(sqlContext, STOPS, "HH:mm:ss", null, ",");
+        //Dataset<Row> shapes = DatasetReader.readFiles(sqlContext, SHAPES, "HH:mm:ss", null, ",");
 
         Dataset<Row> trips = DatasetReader.readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
 
         Dataset<Row> swarcoTripsMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIPS_MATCHING, "HH:mm:ss", "", "|", false);
 
         Dataset<Row> vehicleMessages = DatasetReader.readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", ";");
+        //for now, we can use only block_id from transitidata because we don't know how direction_id and shift_id are mapped
         Dataset<Row> swarcoTripCompanyMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIP_COMPANY_MATCHING, null, null, ";");
         vehicleMessages = vehicleMessages.join(swarcoTripCompanyMatching, new Set.Set1<>("TripID").toSeq(),"left")
-                .join(swarcoTripsMatching.toDF("number",
+                .join(swarcoTripsMatching.toDF(
+                        "number",
                         "block_id",
                         "stage_id",
                         "not_used_0",
@@ -136,31 +142,19 @@ public class Pipeline {
                         "direction_id",
                         "TripCompanyCode",
                         "empty")
-                        .select(col("block_id"),
-                                col("TripCompanyCode"),
-                                col("planned_time")).dropDuplicates(),
+                        .select(
+                                col("block_id").as("swarco_block_id"),
+                                col("TripCompanyCode")).dropDuplicates(),
                         new Set.Set1<>("TripCompanyCode").toSeq(),"left")
                 .join(trips.select(
-                        col("direction_id"),
-                        col("block_id"),
-                        col("route_id"),
-                        col("trip_id")),
-                        new Set.Set1<>("block_id").toSeq(),
-                        "left")
-                .join(stopTimes.select(
-                        col("trip_id").as("stops_trip_id"),
-                        col("arrival_time"),
-                        col("departure_time"),
-                        col("stop_id"),
-                        col("stop_sequence")),
-                        col("trip_id").equalTo(col("stops_trip_id")).and(
-                        col("planned_time").lt(col("departure_time"))
-                                .and(col("planned_time")
-                                .gt(col("arrival_time")))),
-                        "left")
-                .orderBy("VehicleID", "SentDate", "TripID");
-        vehicleMessages.repartition(1).write()
-                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
+                        //col("direction_id"),
+                        col("block_id").as("swarco_block_id"),
+                        //col("shape_id"),
+                        col("route_id").as("swarco_route_id")).dropDuplicates(),
+                        new Set.Set1<>("swarco_block_id").toSeq(),
+                        "left");
+        //vehicleMessages.orderBy("VehicleID", "SentDate", "TripID").repartition(1).write()
+                //.option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
 
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
@@ -200,9 +194,13 @@ public class Pipeline {
                         coalesce(col("WGS84La"), last(events.col("WGS84La"), true).over(ws)))
                 .withColumn("TripID",
                         coalesce(col("TripID"), last(events.col("TripID"), true).over(ws)))
+
+                .withColumn("swarco_route_id",
+                        coalesce(col("swarco_route_id"), last(events.col("swarco_route_id"), true).over(ws)))
+
         .drop("WGS84Fi", "WGS84La", "nearest_stop_id");
         //
-        events.orderBy(col("GarNr"), col("timestamp")).show(1000);
+        //events.orderBy(col("GarNr"), col("timestamp")).show(1000);
 
         Dataset<Row> predicted = predictExitsForTwoOrMoreTransactions(events, kdTreeStopClassifier);
         events = events.withColumnRenamed("timestamp", "exit_timestamp")
@@ -227,6 +225,7 @@ public class Pipeline {
                 "left");
         predicted.orderBy("ValidTalonaId", "timestamp").repartition(1).write()
                 .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
+        //predicted.write().json(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
         spark.stop();
     }
 
@@ -313,16 +312,6 @@ public class Pipeline {
                 col("stop_lon"))
                 .agg(first(col("stop_sequence")).as("stop_sequence"),
                         first(col("trip_id")).as("trip_id"));
-/*                .join(schedule.groupBy(col("trip_id")).agg(
-                        min(col("stop_sequence")).as("first_stop"),
-                        max(col("stop_sequence")).as("last_stop")),
-                new Set.Set1<>("trip_id").toSeq(),
-                "inner")
-                .withColumn("stop_type",
-                        when(col("stop_sequence").equalTo(col("first_stop")), "begin")
-                        .when(col("stop_sequence").equalTo(col("last_stop")), "end")
-                        .otherwise("mediate"))
-                .drop("first_stop", "last_stop");*/
     }
 
     private static Dataset<Row> buildDailySchedule(Dataset<Row> routes,
@@ -368,9 +357,7 @@ public class Pipeline {
                         col("Code"),
                         col("WGS84Fi"),
                         col("WGS84La"),
-                        col("direction_id").as("hdi"),
-                        col("route_id").as("hri"),
-                        col("trip_id").as("hti"));
+                        col("swarco_route_id"));
         //filter open doors only and broken data
         transportEvents = transportEvents
                 .filter(transportEvents.col("Code").equalTo("DoorsOpen")
