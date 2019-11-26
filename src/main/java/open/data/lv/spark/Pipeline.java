@@ -143,19 +143,19 @@ public class Pipeline {
                         "TripCompanyCode",
                         "empty")
                         .select(
-                                col("block_id").as("swarco_block_id"),
+                                col("block_id"),
                                 col("TripCompanyCode")).dropDuplicates(),
                         new Set.Set1<>("TripCompanyCode").toSeq(),"left")
                 .join(trips.select(
                         //col("direction_id"),
-                        col("block_id").as("swarco_block_id"),
+                        col("block_id"),
                         //col("shape_id"),
-                        col("route_id").as("swarco_route_id")).dropDuplicates(),
-                        new Set.Set1<>("swarco_block_id").toSeq(),
+                        col("route_id")).dropDuplicates(),
+                        new Set.Set1<>("block_id").toSeq(),
                         "left");
         //vehicleMessages.orderBy("VehicleID", "SentDate", "TripID").repartition(1).write()
                 //.option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
-
+        //vehicleMessages.show();
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
 
@@ -195,8 +195,8 @@ public class Pipeline {
                 .withColumn("TripID",
                         coalesce(col("TripID"), last(events.col("TripID"), true).over(ws)))
 
-                .withColumn("swarco_route_id",
-                        coalesce(col("swarco_route_id"), last(events.col("swarco_route_id"), true).over(ws)))
+                .withColumn("route_id",
+                        coalesce(col("route_id"), last(events.col("route_id"), true).over(ws)))
 
         .drop("WGS84Fi", "WGS84La", "nearest_stop_id");
         //
@@ -357,7 +357,7 @@ public class Pipeline {
                         col("Code"),
                         col("WGS84Fi"),
                         col("WGS84La"),
-                        col("swarco_route_id"));
+                        col("route_id"));
         //filter open doors only and broken data
         transportEvents = transportEvents
                 .filter(transportEvents.col("Code").equalTo("DoorsOpen")
@@ -478,7 +478,7 @@ public class Pipeline {
                 col("VehicleMessageID"),
                 col("GarNr"),
                 col("route"),
-                //col("numeric_route_id"),
+                col("route_id"),
                 col("Virziens").as("direction"),
                 col("TripID"),
                 col("Code"),
