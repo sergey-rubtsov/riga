@@ -8,6 +8,7 @@ buildscript {
 
     repositories {
         maven { url "https://download.osgeo.org/webdav/geotools/" }
+        maven { url "http://nexus.onebusaway.org/nexus/content/repositories/public/" }
         maven { url "https://repo.spring.io/release/" }
         maven { url "http://repo.spring.io/libs-snapshot-local" }
         maven { url "http://repo.spring.io/libs-milestone-local" }
@@ -47,6 +48,7 @@ task getHomeDir {
 
 repositories {
     maven { url "https://download.osgeo.org/webdav/geotools/" }
+    maven { url "http://nexus.onebusaway.org/nexus/content/repositories/public/" }
     maven { url "https://dl.bintray.com/matsim/matsim" }
     maven { url "https://repo.boundlessgeo.com/main" }
     maven { url "http://oss.jfrog.org/libs-snapshot" }
@@ -86,7 +88,10 @@ dependencies {
     compile group: 'org.codehaus.janino', name: 'janino', version: '3.0.8'
     compile group: 'com.h2database', name: 'h2', version: '1.4.196'
 
-    compile fileTree(include: '*.jar', dir: 'libs')
+    compile group: 'com.conveyal', name: 'gtfs-lib', version: '5.0.7'
+    compile group: 'com.conveyal', name: 'jackson2-geojson', version: '0.8'
+
+    //compile fileTree(include: '*.jar', dir: 'libs')
 
     compile group: 'javax.media', name: 'jai-core', version: '1.1.3'
 
