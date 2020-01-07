@@ -3,9 +3,21 @@ buildscript {
     ext {
         springBootVersion = '1.5.2.RELEASE'
         jackson_version = '2.8.1'
+        matsimVersion = '11.0'
     }
 
     repositories {
+        maven { url "https://download.osgeo.org/webdav/geotools/" }
+        maven { url "http://nexus.onebusaway.org/nexus/content/repositories/public/" }
+        maven { url "https://repo.spring.io/release/" }
+        maven { url "http://repo.spring.io/libs-snapshot-local" }
+        maven { url "http://repo.spring.io/libs-milestone-local" }
+        maven { url "http://repo.spring.io/libs-release-local" }
+        maven { url "http://spantus.sourceforge.net/maven/global/" }
+        maven { url "https://dl.bintray.com/matsim/matsim" }
+        maven { url "https://repo.boundlessgeo.com/main" }
+        maven { url "http://oss.jfrog.org/libs-snapshot" }
+        maven { url "https://packages.atlassian.com/maven-3rdparty/" }
         mavenCentral()
         jcenter()
         maven { url "https://plugins.gradle.org/m2/" }
@@ -28,14 +40,26 @@ configurations.all {
     exclude group: 'org.slf4j', module: 'slf4j-log4j12'
 }
 
+task getHomeDir {
+    doLast {
+        println gradle.gradleHomeDir
+    }
+}
+
 repositories {
-    mavenCentral()
-    jcenter()
+    maven { url "https://download.osgeo.org/webdav/geotools/" }
+    maven { url "http://nexus.onebusaway.org/nexus/content/repositories/public/" }
+    maven { url "https://dl.bintray.com/matsim/matsim" }
+    maven { url "https://repo.boundlessgeo.com/main" }
+    maven { url "http://oss.jfrog.org/libs-snapshot" }
     maven { url "https://repo.spring.io/release/" }
     maven { url "http://repo.spring.io/libs-snapshot-local" }
     maven { url "http://repo.spring.io/libs-milestone-local" }
     maven { url "http://repo.spring.io/libs-release-local" }
     maven { url "http://spantus.sourceforge.net/maven/global/" }
+    maven { url "https://packages.atlassian.com/maven-3rdparty/" }
+    mavenCentral()
+    jcenter()
 }
 
 dependencies {
@@ -63,7 +87,31 @@ dependencies {
 
     compile group: 'org.codehaus.janino', name: 'janino', version: '3.0.8'
     compile group: 'com.h2database', name: 'h2', version: '1.4.196'
-    compileOnly ("org.projectlombok:lombok:1.16.16")
+
+    compile group: 'com.conveyal', name: 'gtfs-lib', version: '5.0.7'
+    compile group: 'com.conveyal', name: 'jackson2-geojson', version: '0.8'
+
+    //compile fileTree(include: '*.jar', dir: 'libs')
+
+    compile group: 'javax.media', name: 'jai-core', version: '1.1.3'
+
+    compile group: 'org.geotools', name: 'gt-main', version: '14.0'
+    compile group: 'org.matsim', name: 'matsim', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'otfvis', version: '0.11.0-2018w49'
+    compile group: 'org.matsim.contrib', name: 'taxi', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'parking', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'common', version: "${matsimVersion}"
+
+    compile group: 'org.matsim.contrib', name: 'minibus', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'roadpricing', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'taxi', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'av', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'freight', version: "${matsimVersion}"
+    compile group: 'org.matsim.contrib', name: 'bicycle', version: "${matsimVersion}"
+
+    testCompile group: 'org.matsim', name: 'matsim-examples', version: "${matsimVersion}"
+
     testCompile group: 'com.h2database', name: 'h2', version: '1.4.196'
     testCompile("org.springframework.boot:spring-boot-starter-test")
+    compileOnly ("org.projectlombok:lombok:1.16.16")
 }
