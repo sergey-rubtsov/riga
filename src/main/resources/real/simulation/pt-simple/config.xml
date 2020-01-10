@@ -1,0 +1,46 @@
+<?xml version="1.0" ?>
+<!DOCTYPE config SYSTEM "http://www.matsim.org/files/dtd/config_v2.dtd">
+<config>
+
+	<module name="global">
+		<param name="randomSeed" value="4711" />
+		<param name="coordinateSystem" value="gk3" />
+	</module>
+
+	<module name="network">
+		<param name="inputNetworkFile" value="network.xml" />
+	</module>
+
+	<module name="transit">
+		<param name="useTransit" value="true" />
+		<param name="transitScheduleFile" value="transitschedule.xml" />
+		<param name="vehiclesFile" value="transitVehicles.xml" />
+		<param name="transitModes" value="pt" />
+	</module>
+
+	<module name="TimeAllocationMutator">
+	        <param name="mutationRange" value="7200.0"/>
+	</module>
+
+	<module name="controler">
+		<param name="firstIteration" value="0" />
+		<param name="lastIteration" value="0" />
+		<param name="eventsFileFormat" value="xml" />
+		<param name="writeEventsInterval" value="1" />
+		<param name="writePlansInterval" value="50" />
+	</module>
+	
+	<module name="qsim">
+		<!-- "start/endTime" of MobSim (00:00:00 == take earliest activity time/ run as long as active vehicles exist) -->
+		<param name="startTime" value="05:00:00" />
+		<param name="endTime" value="23:00:00" />
+		<param name="snapshotperiod" value="00:00:00"/> 
+		<param name="removeStuckVehicles" value="false" />
+		<param name="vehicleBehavior" value="wait" />
+		<param name="flowCapacityFactor" value="1.0" />
+		<param name="storageCapacityFactor" value="1.0" />
+		<param name="snapshotStyle" value="queue" />
+	</module>
+
+
+</config>

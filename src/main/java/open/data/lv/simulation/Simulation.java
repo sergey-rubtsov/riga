@@ -29,7 +29,8 @@ public class Simulation {
     private static final Logger log = Logger.getLogger(Simulation.class);
 
     public static void main(String[] args) {
-        playConfig("real/simulation/config.xml");
+        playConfig("real/simulation/pt-simple/config.xml");
+        //playConfig("real/simulation/config.xml");
     }
 
     public static void playConfig(final String url) {
