@@ -18,7 +18,7 @@
  *                                                                         *
  * *********************************************************************** */
 
-package org.matsim.pt;
+package open.data.lv.simulation;
 
 import java.util.ArrayList;
 import java.util.Collections;

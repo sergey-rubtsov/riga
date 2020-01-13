@@ -8,7 +8,8 @@ buildscript {
 
     repositories {
         maven { url "https://download.osgeo.org/webdav/geotools/" }
-        maven { url "http://nexus.onebusaway.org/nexus/content/repositories/public/" }
+        maven { url 'https://bintray.com/schweizerischebundesbahnen/simba.mvn/matsim-sbb-extensions' }
+        maven { url "http://nexus.onebusaway.org/nexus/content/repositories/public/" }        
         maven { url "https://repo.spring.io/release/" }
         maven { url "http://repo.spring.io/libs-snapshot-local" }
         maven { url "http://repo.spring.io/libs-milestone-local" }
@@ -63,6 +64,7 @@ repositories {
 }
 
 dependencies {
+    compile 'ch.sbb:matsim-sbb-extensions:12.1'
     compile("org.springframework.boot:spring-boot-starter-web")
     compile("org.springframework.boot:spring-boot-starter-security")
     compile("org.springframework.security.oauth:spring-security-oauth2")

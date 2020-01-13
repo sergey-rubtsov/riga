@@ -7,6 +7,7 @@ import org.matsim.core.api.experimental.events.EventsManager;
 import org.matsim.core.config.Config;
 import org.matsim.core.config.ConfigUtils;
 import org.matsim.core.config.ConfigWriter;
+import org.matsim.core.controler.AbstractModule;
 import org.matsim.core.controler.PrepareForSimUtils;
 import org.matsim.core.events.EventsUtils;
 import org.matsim.core.gbl.MatsimRandom;
@@ -50,6 +51,16 @@ public class Simulation {
         PrepareForSimUtils.createDefaultPrepareForSim(scenario).run();
         QSim qSim = new QSimBuilder(scenario.getConfig()) //
                 .useDefaults() //
+                .addOverridingModule(new AbstractModule() {
+                    @Override
+                    public void install() {
+                        // To use the deterministic pt simulation:
+                        //install(new SBBQSimModule());
+
+                        // To use the fast pt router:
+                        //install(new SwissRailRaptorModule());
+                    }
+                })
                 .build(scenario, events);
 
         OnTheFlyServer server = startServerAndRegisterWithQSim(scenario.getConfig(),scenario, events, qSim);
