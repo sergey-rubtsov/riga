@@ -13,7 +13,7 @@
 </transitStops>
 <transitLine id="gelb">
   <transitRoute id="gelb_1">
-    <transportMode>pt</transportMode>
+    <transportMode>train</transportMode>
     <routeProfile>
       <stop refId="192" departureOffset="00:00:00" arrivalOffset="00:00:00" awaitDeparture="true"/>
       <stop refId="293" departureOffset="00:00:30" arrivalOffset="00:00:30" awaitDeparture="true"/>

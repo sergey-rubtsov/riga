@@ -15,7 +15,12 @@
 		<param name="useTransit" value="true" />
 		<param name="transitScheduleFile" value="transitschedule.xml" />
 		<param name="vehiclesFile" value="transitVehicles.xml" />
-		<param name="transitModes" value="pt" />
+		<param name="transitModes" value="train" />
+	</module>
+
+	<module name="SBBPt" >
+		<param name="deterministicServiceModes" value="train" />
+		<param name="createLinkEventsInterval" value="10" />
 	</module>
 
 	<module name="TimeAllocationMutator">
