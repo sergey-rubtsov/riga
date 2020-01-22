@@ -55,7 +55,7 @@ public class Simulation {
                     @Override
                     public void install() {
                         // To use the deterministic pt simulation:
-                        //install(new SBBQSimModule());
+                        //install(new SimpleTransitEngineQSimModule());
 
                         // To use the fast pt router:
                         //install(new SwissRailRaptorModule());

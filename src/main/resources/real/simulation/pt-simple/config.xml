@@ -18,7 +18,7 @@
 		<param name="transitModes" value="train" />
 	</module>
 
-	<module name="SBBPt" >
+	<module name="SimplePt" >
 		<param name="deterministicServiceModes" value="train" />
 		<param name="createLinkEventsInterval" value="10" />
 	</module>
