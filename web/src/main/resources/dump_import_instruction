@@ -1,0 +1,60 @@
+How to export open data to postgre db.
+
+Install db, restore my dump "dump_riga_db" or create tables manually from csv files.
+
+The SQL queries to create scheme:
+
+CREATE TABLE routes
+(
+  id serial NOT NULL,
+  route_id character varying(50) NOT NULL,
+  route_short_name character varying(50) NOT NULL,
+  route_long_name character varying(255) NOT NULL,
+  CONSTRAINT routes_pkey PRIMARY KEY (id)
+)
+
+For routes prepare routes file, edit it using excel or "CSVed" tool from directory "csveditor"
+(open source tool from here https://csved.sjfrancke.nl/).
+Remove extra columns, except route_id, route_short_name, route_long_name and save it as csv.
+Your should get file like "routes.csv".
+Then click on new table in postgre and import your routes file.
+For import, select options: import mode, path to file, header "yes" delimiter as comma,
+on columns tab, remove id from import, because it does not exists in csv.
+Check your table.
+
+Do the same things for next tables (create tables with query, remove extra data from dump files and import them):
+
+CREATE TABLE stops
+(
+  id serial NOT NULL,
+  stop_id character varying(50) NOT NULL,
+  stop_name character varying(50) NOT NULL,
+  stop_lat double precision NOT NULL,
+  stop_lon double precision NOT NULL,
+  CONSTRAINT stops_pkey PRIMARY KEY (id)
+)
+
+CREATE TABLE trips
+(
+  id serial NOT NULL,
+  route_id character varying(50) NOT NULL,
+  service_id character varying(50) NOT NULL,
+  trip_id character varying(50) NOT NULL,
+  trip_headsign character varying(255) NOT NULL,
+  CONSTRAINT trips_pkey PRIMARY KEY (id)
+)
+
+CREATE TABLE validations
+(
+  id serial NOT NULL,
+  Ier_ID character varying(50) NOT NULL,
+  Parks character varying(50) NOT NULL,
+  TranspVeids character varying(50) NOT NULL,
+  GarNr character varying(50) NOT NULL,
+  MarsrNos character varying(255) NOT NULL,
+  TMarsruts character varying(50) NOT NULL,
+  Virziens character varying(50) NOT NULL,
+  ValidTalonaId character varying(50) NOT NULL,
+  Laiks TIMESTAMP NOT NULL,
+  CONSTRAINT validations_pkey PRIMARY KEY (id)
+)

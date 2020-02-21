@@ -1,0 +1,10 @@
+### IntelliJ IDEA ###
+.idea
+.gradle
+classes/
+**/build/
+*.iws
+*.iml
+*.ipr
+gradle.properties
+**/spark/result/

@@ -1,2 +1,3 @@
 rootProject.name = 'riga'
+include 'web', 'spark', 'sim', 'commons'
 
