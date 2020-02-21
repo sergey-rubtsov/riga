@@ -97,8 +97,8 @@ public class Pipeline {
         System.setProperty("hadoop.home.dir", System.getProperty("user.dir") + "\\spark\\hadoop");
         System.setProperty("SPARK_CONF_DIR", System.getProperty("user.dir") + "\\spark\\conf");
         PropertyConfigurator.configure(System.getProperty("user.dir") + "\\spark\\conf\\log4j.properties");
-        Logger.getLogger("org").setLevel(Level.WARN);
-        Logger.getLogger("akka").setLevel(Level.WARN);
+        //Logger.getLogger("org").setLevel(Level.WARN);
+        //Logger.getLogger("akka").setLevel(Level.WARN);
         SparkConf conf = new SparkConf()
                 .setMaster(MASTER_URL)
                 .setAppName("Riga public transport")
@@ -156,7 +156,7 @@ public class Pipeline {
                         "left");
         //vehicleMessages.orderBy("VehicleID", "SentDate", "TripID").repartition(1).write()
                 //.option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
-        //vehicleMessages.show();
+        //vehicleMessages.orderBy("VehicleID", "SentDate", "TripID").show();
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
 
@@ -195,11 +195,10 @@ public class Pipeline {
                         coalesce(col("WGS84La"), last(events.col("WGS84La"), true).over(ws)))
                 .withColumn("TripID",
                         coalesce(col("TripID"), last(events.col("TripID"), true).over(ws)))
-
                 .withColumn("route_id",
                         coalesce(col("route_id"), last(events.col("route_id"), true).over(ws)))
-
         .drop("WGS84Fi", "WGS84La", "nearest_stop_id");
+
 /*        events.filter(col("event_source").equalTo("passenger"))
                 .select(col("GarNr"), col("route"), col("direction"), col("TripID"), col("ValidTalonaId"), col("timestamp"), col("stop_id"), col("stop_lat"), col("stop_lon"))
                 .orderBy(col("ValidTalonaId"), col("timestamp"))
