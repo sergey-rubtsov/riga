@@ -2,8 +2,6 @@ package open.data.lv.spark;
 
 import open.data.lv.spark.kd.KDTreeStopClassifier;
 import open.data.lv.spark.utils.DatasetReader;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
@@ -23,11 +21,12 @@ import scala.collection.immutable.Set;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.apache.spark.sql.functions.coalesce;
 import static org.apache.spark.sql.functions.col;
@@ -38,13 +37,12 @@ import static org.apache.spark.sql.functions.first;
 import static org.apache.spark.sql.functions.lag;
 import static org.apache.spark.sql.functions.last;
 import static org.apache.spark.sql.functions.lit;
-import static org.apache.spark.sql.functions.min;
 import static org.apache.spark.sql.functions.monotonically_increasing_id;
-import static org.apache.spark.sql.functions.pow;
-import static org.apache.spark.sql.functions.sqrt;
+import static org.apache.spark.sql.functions.to_timestamp;
 import static org.apache.spark.sql.functions.trim;
 import static org.apache.spark.sql.functions.udf;
 import static org.apache.spark.sql.functions.when;
+import static org.apache.spark.sql.types.DataTypes.IntegerType;
 import static org.apache.spark.sql.types.DataTypes.StringType;
 
 public class Pipeline {
@@ -124,42 +122,59 @@ public class Pipeline {
         //Dataset<Row> shapes = DatasetReader.readFiles(sqlContext, SHAPES, "HH:mm:ss", null, ",");
 
         Dataset<Row> trips = DatasetReader.readFiles(sqlContext, TRIPS, "HH:mm:ss", null, ",");
+        Dataset<Row> idealScheduleOfTrips = stopTimes.select(col("trip_id"),
+                col("arrival_time").as("planned_time"),
+                col("stop_id"),
+                col("stop_sequence"))
+                .join(trips.select("route_id" ,"service_id", "trip_id", "direction_id", "block_id" , "shape_id"),
+                        new Set.Set1<>("trip_id").toSeq(), "left");
 
         Dataset<Row> swarcoTripsMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIPS_MATCHING, "HH:mm:ss", "", "|", false);
 
-        Dataset<Row> vehicleMessages = DatasetReader.readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", ";");
-        //for now, we can use only block_id from transitidata because we don't know how direction_id and shift_id are mapped
+        //Trips.csv: TripID(*) -> TripCompanyCode(1)
         Dataset<Row> swarcoTripCompanyMatching = DatasetReader.readFiles(sqlContext, SWARCO_TRIP_COMPANY_MATCHING, null, null, ";");
-        vehicleMessages = vehicleMessages.join(swarcoTripCompanyMatching, new Set.Set1<>("TripID").toSeq(),"left")
-                .join(swarcoTripsMatching.toDF(
-                        "number",
-                        "block_id",
-                        "stage_id",
-                        "not_used_0",
-                        "not_used_1",
-                        "planned_time",
-                        "not_used_2",
-                        "not_used_3",
-                        "direction_id",
-                        "TripCompanyCode",
-                        "empty")
-                        .select(
-                                col("block_id"),
-                                col("TripCompanyCode")).dropDuplicates(),
-                        new Set.Set1<>("TripCompanyCode").toSeq(),"left")
-                .join(trips.select(
-                        //col("direction_id"),
+        swarcoTripsMatching = swarcoTripsMatching.toDF(
+                "number",
+                "block_id",
+                "stage_id",
+                "not_used_0",
+                "not_used_1",
+                "planned_time",
+                "not_used_2",
+                "not_used_3",
+                "direction_id",
+                "TripCompanyCode",
+                "empty");
+        swarcoTripsMatching = swarcoTripsMatching.select(
                         col("block_id"),
-                        //col("shape_id"),
-                        col("route_id")).dropDuplicates(),
-                        new Set.Set1<>("block_id").toSeq(),
-                        "left");
-        //vehicleMessages.orderBy("VehicleID", "SentDate", "TripID").repartition(1).write()
-                //.option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
-        //vehicleMessages.orderBy("VehicleID", "SentDate", "TripID").show();
+                        col("planned_time"),
+                        col("TripCompanyCode"));
+        swarcoTripsMatching = swarcoTripsMatching.filter(col("TripCompanyCode").isNotNull());
+        List<Stay> stays = idealScheduleOfTrips
+                .join(swarcoTripsMatching,
+                new Set.Set2<>("block_id", "planned_time").toSeq(), "left")
+                .join(stops, new Set.Set1<>("stop_id").toSeq(), "left")
+                .select(col("block_id"),
+                        col("planned_time"),
+                        col("trip_id"),
+                        col("stop_id"),
+                        col("stop_sequence"),
+                        col("route_id"),
+                        col("service_id"),
+                        col("direction_id"),
+                        col("shape_id"),
+                        col("TripCompanyCode").as("tripCompanyCode"),
+                        col("stop_id"),
+                        col("stop_lat").as("lat"),
+                        col("stop_lon").as("lon")).as(Encoders.bean(Stay.class)).collectAsList();
+        KDTreeStopClassifier swarcoStopClassifier = new KDTreeStopClassifier();
+        swarcoStopClassifier.addStays(stays);
+        Dataset<Row> vehicleMessages = DatasetReader.readFiles(sqlContext, VEHICLE_MESSAGES_FILES, "yyyy-MM-dd HH:mm:ss.SSS", "NULL", ";");
+        Dataset<Row> vehicleAndCompanyMapping = DatasetReader.readFiles(sqlContext, VEHICLE_MAPPING_FILE, null, null, ";");
+        Dataset<Row> eventTypes = DatasetReader.readFiles(sqlContext, MESSAGE_TYPE_FILE, null, null, ";");
+        Dataset<Row> transportEvents = prepareTransportEventsForJoin(vehicleMessages, eventTypes, vehicleAndCompanyMapping);
         Dataset<Row> dailySchedule = buildDailySchedule(routes, stopTimes, stops, trips, routeMapping);
         Dataset<Row> regularRoutesFromSchedule = buildRegularRoutesFromSchedule(dailySchedule);
-
         Dataset<Stop> coordinates = regularRoutesFromSchedule
                 .select(col("route"),
                         col("direction_id").as("dir"),
@@ -168,17 +183,22 @@ public class Pipeline {
                         col("stop_lon").as("lon"))
                 .as(Encoders.bean(Stop.class));
         List<Stop> points = coordinates.collectAsList();
-        KDTreeStopClassifier kdTreeStopClassifier = new KDTreeStopClassifier(points);
-
+        KDTreeStopClassifier routeStopClassifier = new KDTreeStopClassifier();
+        routeStopClassifier.addStops(points);
         Dataset<Row> tickets = DatasetReader.readFiles(sqlContext, TICKET_VALIDATIONS_FILES, "dd.MM.yyyy HH:mm:ss", null, null);
-
-        Dataset<Row> vehicleAndCompanyMapping = DatasetReader.readFiles(sqlContext, VEHICLE_MAPPING_FILE, null, null, ";");
-        Dataset<Row> eventTypes = DatasetReader.readFiles(sqlContext, MESSAGE_TYPE_FILE, null, null, ";");
         Dataset<Row> validationEvents = prepareValidationEventsForJoin(tickets, routeMapping);
-        Dataset<Row> transportEvents = prepareTransportEventsForJoin(vehicleMessages, eventTypes, vehicleAndCompanyMapping);
-        Dataset<Row> events = unionDataSets(validationEvents, vehicleAndCompanyMapping, transportEvents);
+        transportEvents = transportEvents
+                .join(swarcoTripCompanyMatching, new Set.Set1<>("TripID").toSeq(),"left")
+                .withColumn("time", to_timestamp(col("time"), "HH:mm:ss"));
+        transportEvents = transportEvents
+                .withColumn("event_source",
+                        lit("vehicle"));
+        validationEvents = validationEvents
+                .withColumn("event_source",
+                        lit("passenger"));
+        Dataset<Row> events = unionDatasets(validationEvents, vehicleAndCompanyMapping, transportEvents);
         events = events
-                .withColumn("nearest_stop_id", findNearestStopFunction(kdTreeStopClassifier)
+                .withColumn("nearest_stop_id", findNearestStopFunction(routeStopClassifier)
                 .apply(col("route"),
                         col("WGS84Fi"),
                         col("WGS84La")));
@@ -187,6 +207,8 @@ public class Pipeline {
                 .orderBy(events.col("timestamp"))
                 .rowsBetween(Integer.MIN_VALUE + 1, Window.currentRow());
         events = events
+                .withColumn("TripCompanyCode",
+                        coalesce(col("TripCompanyCode"), last(events.col("TripCompanyCode"), true).over(ws)))
                 .withColumn("stop_id",
                         coalesce(col("nearest_stop_id"), last(events.col("nearest_stop_id"), true).over(ws)))
                 .withColumn("stop_lat",
@@ -198,102 +220,58 @@ public class Pipeline {
                 .withColumn("route_id",
                         coalesce(col("route_id"), last(events.col("route_id"), true).over(ws)))
         .drop("WGS84Fi", "WGS84La", "nearest_stop_id");
-
-/*        events.filter(col("event_source").equalTo("passenger"))
-                .select(col("GarNr"), col("route"), col("direction"), col("TripID"), col("ValidTalonaId"), col("timestamp"), col("stop_id"), col("stop_lat"), col("stop_lon"))
-                .orderBy(col("ValidTalonaId"), col("timestamp"))
-                .coalesce(1)
-                .write().option("header", "true").csv(System.getProperty("user.dir") + "\\enters\\" + UUID.randomUUID().toString());*/
-
-        Dataset<Row> predicted = predictExitsForTwoOrMoreTransactions(events, kdTreeStopClassifier);
-        events = events.withColumnRenamed("timestamp", "exit_timestamp")
-                .select(
-                        col("exit_timestamp"),
-                        col("TripID"),
-                        col("stop_id").as("exit_stop_id"));
-        predicted = predicted.join(
-                events, new Set.Set2<>("TripID", "exit_stop_id").toSeq(),
-                "left");
-        predicted = predicted.join(stops.select(
-                col("stop_id").as("exit_stop_id"),
-                col("stop_name").as("exit_stop_name"),
-                col("stop_lat").as("exit_stop_lat"),
-                col("stop_lon").as("exit_stop_lon")),
-                new Set.Set1<>("exit_stop_id").toSeq(),
-                "left");
-        predicted = predicted.join(stops.select(
-                col("stop_id"),
-                col("stop_name")),
-                new Set.Set1<>("stop_id").toSeq(),
-                "left");
-        predicted.show();
-        //predicted.orderBy("ValidTalonaId", "timestamp").repartition(1).write()
-                //.option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
-        //predicted.write().json(System.getProperty("user.dir") + "\\result\\" + UUID.randomUUID().toString());
+        events = events.withColumn("swarco_stop_id", nearestScheduledStopIdFunction(swarcoStopClassifier).apply(
+                col("TripCompanyCode"),
+                col("stop_lat"),
+                col("stop_lon")));
+        events = events.withColumn("swarco_arrive_time", nearestScheduledPlannedTimeFunction(swarcoStopClassifier).apply(
+                col("TripCompanyCode"),
+                col("stop_lat"),
+                col("stop_lon")));
+        events = events.withColumn("swarco_direction", nearestScheduledDirectionFunction(swarcoStopClassifier).apply(
+                col("TripCompanyCode"),
+                col("stop_lat"),
+                col("stop_lon")));
+        events = events.filter(col("event_source").equalTo("passenger"))
+                .drop("VehicleMessageID", "Code", "event_source");
+        Dataset<Row> predicted = predictExitsForTwoOrMoreTransactions(events, routeStopClassifier, swarcoStopClassifier);
+        predicted = predicted.join(events,
+                new Set.Set2<>("ValidTalonaId", "timestamp").toSeq(), "right");
+        predicted.orderBy("ValidTalonaId", "timestamp").repartition(1).write()
+                .option("header", "true").csv(System.getProperty("user.dir") + "\\result\\" + LocalDateTime.now()
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-SSS")));
+        //predicted.write().json(System.getProperty("user.dir") + "\\json\\");
         spark.stop();
     }
 
-    private static Dataset<Row> postProcessExits(Dataset<Row> exits) {
-        exits = exits.groupBy("ValidTalonaId", "timestamp")
-                .agg(first(col("stop_id")).as("stop_id"),
-                        first(col("exit_stop_id")).as("exit_stop_id"),
-                        first(col("TripID")).as("TripID"),
-                        first(col("route")).as("route"),
-                        first(col("GarNr")).as("GarNr"),
-                        first(col("stop_lat")).as("stop_lat"),
-                        first(col("stop_lon")).as("stop_lon"),
-                        min(col("exit_timestamp")).as("exit_timestamp"),
-                        first(col("exit_stop_name")).as("exit_stop_name"),
-                        first(col("exit_stop_lat")).as("exit_stop_lat"),
-                        first(col("exit_stop_lon")).as("exit_stop_lon"),
-                        first(col("stop_name")).as("stop_name"));
-
-        return exits
-                .orderBy("ValidTalonaId", "timestamp");
-    }
-
-    private static Dataset<Row> calculateEuclideanDistanceBetweenExitAndEnter(Dataset<Row> exits) {
-        WindowSpec ws = Window
-                .partitionBy(exits.col("ValidTalonaId"))
-                .orderBy(exits.col("timestamp"));
-        return exits
-                //.withColumn("number_of_transaction", row_number().over(ws))
-                .withColumn("distance_between_exit_and_enter",
-                        sqrt(pow((exits.col("exit_stop_lat")
-                                .minus(lag(col("stop_lat"), -1, null).over(ws)).multiply(111.3)), 2).
-                                plus(pow((exits.col("exit_stop_lon")
-                                        .minus(lag(col("stop_lon"), -1, null).over(ws)).multiply(60.8)), 2))));
-    }
-
     private static Dataset<Row> predictExitsForTwoOrMoreTransactions(Dataset<Row> enters,
-                                                                     KDTreeStopClassifier kdTreeStopClassifier) {
+                                                                     KDTreeStopClassifier kdTreeStopClassifier,
+                                                                     KDTreeStopClassifier swarcoStopClassifier) {
         WindowSpec ws = Window
                 .partitionBy(enters.col("ValidTalonaId"))
                 .orderBy(enters.col("timestamp"));
-        return enters.drop("VehicleID",
-                "VehicleMessageID",
-                "numeric_route_id",
-                "Code",
-                "event_source",
-                //"time",
-                //"date",
-                "nearest_stop_id")
-                .filter(col("event_source").equalTo("passenger"))
+        return enters
                 .withColumn("exit_stop_id",
                         findNearestStopFunction(kdTreeStopClassifier).apply(
                                 col("route"),
                                 lag(col("stop_lat"), -1, null).over(ws),
                                 lag(col("stop_lon"), -1, null).over(ws)))
+                .withColumn("exit_swarco_stop_id",
+                        nearestScheduledStopIdFunction(swarcoStopClassifier).apply(
+                            col("TripCompanyCode"),
+                            lag(col("stop_lat"), -1, null).over(ws),
+                            lag(col("stop_lon"), -1, null).over(ws)))
+                .withColumn("exit_swarco_arrive_time",
+                        nearestScheduledPlannedTimeFunction(swarcoStopClassifier).apply(
+                            col("TripCompanyCode"),
+                            lag(col("stop_lat"), -1, null).over(ws),
+                            lag(col("stop_lon"), -1, null).over(ws)))
                 .select(
-                        col("route"),
-                        col("GarNr"),
-                        col("TripID"),
                         col("ValidTalonaId"),
                         col("timestamp"),
-                        col("stop_id"),
-                        col("stop_lat"),
-                        col("stop_lon"),
-                        col("exit_stop_id"));
+                        col("exit_stop_id"),
+                        col("exit_swarco_stop_id"),
+                        col("exit_swarco_arrive_time"));
     }
 
     private static Dataset<Row> buildRouteMapping(Dataset<Row> routes, Dataset<Row> routeTypes) {
@@ -308,7 +286,6 @@ public class Pipeline {
         return schedule.groupBy(
                 col("route"),
                 col("direction_id"),
-                //col("numeric_route_id"),
                 col("direction"),
                 col("stop_name"),
                 col("stop_id"),
@@ -331,7 +308,6 @@ public class Pipeline {
                 .select(
                         col("route"),
                         col("direction_id"),
-                        //col("numeric_route_id"),
                         col("route_id"),
                         col("stop_name"),
                         col("stop_lat"),
@@ -360,8 +336,8 @@ public class Pipeline {
                         col("SentDate"),
                         col("Code"),
                         col("WGS84Fi"),
-                        col("WGS84La"),
-                        col("route_id"));
+                        col("WGS84La")
+                );
         //filter open doors only and broken data
         transportEvents = transportEvents
                 .filter(transportEvents.col("Code").equalTo("DoorsOpen")
@@ -371,7 +347,7 @@ public class Pipeline {
         transportEvents = transportEvents.withColumn("date",
                 transportEvents.col("SentDate").cast(DataTypes.DateType));
         return transportEvents.withColumn("time",
-                date_format(transportEvents.col("SentDate"), "h:m:s a"));
+                date_format(transportEvents.col("SentDate"), "HH:mm:ss"));
     }
 
     private static Dataset<Row> prepareValidationEventsForJoin(Dataset<Row> tickets, Dataset<Row> routeMapping) {
@@ -388,7 +364,7 @@ public class Pipeline {
         validationEvents = validationEvents.withColumn("date",
                 validationEvents.col("time_stamp").cast(DataTypes.DateType));
         return validationEvents.withColumn("time",
-                date_format(validationEvents.col("time_stamp"), "h:m:s a"))
+                date_format(validationEvents.col("time_stamp"), "HH:mm:ss"))
                 .join(routeMapping, validationEvents.col("TMarsruts").equalTo(routeMapping.col("route")), "inner")
                 .drop("TMarsruts");
     }
@@ -399,9 +375,33 @@ public class Pipeline {
         );
     }
 
-    private static UserDefinedFunction findNearestStopOnSameDirectionFunction(KDTreeStopClassifier classifier) {
+    private static UserDefinedFunction nearestScheduledStopIdFunction(KDTreeStopClassifier classifier) {
         return udf(
-                (UDF3<String, Double, Double, Object>) classifier::findNearestNeighbourIdOnSameDirection, StringType
+                (UDF3<String, Double, Double, Object>) classifier::nearestScheduledStopIdFunction, StringType
+        );
+    }
+
+    private static UserDefinedFunction nearestScheduledPlannedTimeFunction(KDTreeStopClassifier classifier) {
+        return udf(
+                (UDF3<String, Double, Double, Object>) classifier::nearestScheduledPlannedTimeFunction, StringType
+        );
+    }
+
+    private static UserDefinedFunction nearestScheduledDirectionFunction(KDTreeStopClassifier classifier) {
+        return udf(
+                (UDF3<String, Double, Double, Object>) classifier::nearestScheduledDirectionFunction, StringType
+        );
+    }
+
+    private static UserDefinedFunction nearestScheduledDirectionIdFunction(KDTreeStopClassifier classifier) {
+        return udf(
+                (UDF3<String, Double, Double, Object>) classifier::nearestScheduledDirectionIdFunction, IntegerType
+        );
+    }
+
+    private static UserDefinedFunction nearestScheduledStopSequenceFunction(KDTreeStopClassifier classifier) {
+        return udf(
+                (UDF3<String, Double, Double, Object>) classifier::nearestScheduledStopSequenceFunction, IntegerType
         );
     }
 
@@ -423,7 +423,7 @@ public class Pipeline {
         );
     }
 
-    private static Dataset<Row> unionDataSets(Dataset<Row> validations,
+    private static Dataset<Row> unionDatasets(Dataset<Row> validations,
                                               Dataset<Row> companyMapping,
                                               Dataset<Row> vehicle) {
         // here we map vehicles event with VehicleID and validation events with route,
@@ -434,8 +434,6 @@ public class Pipeline {
                 .groupBy(col("GarNr"), col("VehicleID")).agg(
                         first(col("route")).as("route"),
                         first(col("numeric_route_id")).as("numeric_route_id"),
-                        //min(col("time")).as("first_time"),
-                        //max(col("time")).as("last_time"),
                         count(col("time")).as("events")
                 );
         Seq<String> vehicleIDColumn = new Set.Set1<>("VehicleID").toSeq();
@@ -458,19 +456,7 @@ public class Pipeline {
                                 col("VehicleID"),
                                 col("GarNr")),
                         garageNumberColumn, "left");
-        StructType validationSchema = validations.schema();
-        List<String> transportFields = Arrays.asList(vehicle.schema().fieldNames());
-        vehicle = balanceDataset(vehicle, validationSchema, transportFields);
-        StructType transportSchema = vehicle.schema();
-        List<String> validationFields = Arrays.asList(validations.schema().fieldNames());
-        validations = balanceDataset(validations, transportSchema, validationFields);
-        vehicle = vehicle
-                .withColumn("event_source",
-                        lit("vehicle"));
-        validations = validations
-                .withColumn("event_source",
-                        lit("passenger"));
-        Dataset<Row> consolidated = vehicle.unionByName(validations);
+        Dataset<Row> consolidated = unionDatasets(validations, vehicle);
         consolidated = consolidated
                 .withColumn("timestamp", coalesce(col("time_stamp"), col("SentDate")))
                 .drop("time_stamp", "SentDate");
@@ -490,23 +476,33 @@ public class Pipeline {
                 col("WGS84La"),
                 col("event_source"),
                 col("ValidTalonaId"),
-                //col("time"),
-                //col("date"),
+                col("TripCompanyCode"),
+                col("time"),
                 col("timestamp"));
         return consolidated;
     }
 
-    private static Dataset<Row> balanceDataset(Dataset<Row> events, StructType schema, List<String> fields) {
+    private static Dataset<Row> unionDatasets(Dataset<Row> one, Dataset<Row> another) {
+        StructType firstSchema = one.schema();
+        List<String> transportFields = Arrays.asList(another.schema().fieldNames());
+        another = balanceDataset(another, firstSchema, transportFields);
+        StructType secondSchema = another.schema();
+        List<String> validationFields = Arrays.asList(one.schema().fieldNames());
+        one = balanceDataset(one, secondSchema, validationFields);
+        return another.unionByName(one);
+    }
+
+    private static Dataset<Row> balanceDataset(Dataset<Row> dataset, StructType schema, List<String> fields) {
         for (StructField e : schema.fields()) {
             if (!fields.contains(e.name())) {
-                events = events
+                dataset = dataset
                         .withColumn(e.name(),
                                 lit(null));
-                events = events.withColumn(e.name(),
-                        events.col(e.name()).cast(Optional.ofNullable(e.dataType()).orElse(StringType)));
+                dataset = dataset.withColumn(e.name(),
+                        dataset.col(e.name()).cast(Optional.ofNullable(e.dataType()).orElse(StringType)));
             }
         }
-        return events;
+        return dataset;
     }
 
 }

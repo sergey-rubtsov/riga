@@ -2,7 +2,7 @@ package open.data.lv.spark;
 
 import java.io.Serializable;
 
-public class Stop implements Serializable {
+public class Stop implements Point, Serializable {
 
     private String id;
 
@@ -31,6 +31,11 @@ public class Stop implements Serializable {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    @Override
+    public String getKey() {
+        return route;
     }
 
     public double getLat() {

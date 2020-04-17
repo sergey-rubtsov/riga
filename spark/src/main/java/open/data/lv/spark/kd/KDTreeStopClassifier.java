@@ -1,5 +1,6 @@
 package open.data.lv.spark.kd;
 
+import open.data.lv.spark.Stay;
 import open.data.lv.spark.Stop;
 
 import java.io.Serializable;
@@ -7,6 +8,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static java.lang.Math.pow;
 import static java.lang.Math.sqrt;
@@ -15,13 +17,27 @@ public class KDTreeStopClassifier implements Serializable {
 
     private Map<String, KDTree> routes = new HashMap<>();
 
-    public KDTreeStopClassifier(List<Stop> points) {
+    public KDTreeStopClassifier() {
+    }
+
+    public void addStops(List<Stop> points) {
         points.forEach(p -> {
             double[] key = new double[2];
             key[0] = p.getLat();
             key[1] = p.getLon();
-            routes.computeIfAbsent(p.getRoute(), t ->
-                new KDTree(2)
+            routes.computeIfAbsent(p.getKey(), t ->
+                    new KDTree(2)
+            ).insert(key, p);
+        });
+    }
+
+    public void addStays(List<Stay> points) {
+        points.forEach(p -> {
+            double[] key = new double[2];
+            key[0] = p.getLat();
+            key[1] = p.getLon();
+            routes.computeIfAbsent(p.getKey(), t ->
+                    new KDTree(2)
             ).insert(key, p);
         });
     }
@@ -39,7 +55,48 @@ public class KDTreeStopClassifier implements Serializable {
         return null;
     }
 
-    public String findNearestAndThenNearestButInAnotherDirectionId(String route, Double lat, Double lon) {
+    private Optional<Stay> findNearestStay(String tripCompanyCode, Double lat, Double lon) {
+        if (tripCompanyCode == null || lat == null || lon == null) {
+            return Optional.empty();
+        }
+        if (routes.containsKey(tripCompanyCode)) {
+            double[] key = new double[2];
+            key[0] = lat;
+            key[1] = lon;
+            return Optional.ofNullable((Stay) routes.get(tripCompanyCode).nearest(key));
+        }
+        return Optional.empty();
+    }
+
+    public String nearestScheduledStopIdFunction(String tripCompanyCode, Double lat, Double lon) {
+        return findNearestStay(tripCompanyCode, lat, lon).map(Stay::getStop_id).orElse(null);
+    }
+
+    public String nearestScheduledPlannedTimeFunction(String tripCompanyCode, Double lat, Double lon) {
+        return findNearestStay(tripCompanyCode, lat, lon).map(Stay::getPlanned_time).orElse(null);
+    }
+
+    public Integer nearestScheduledDirectionIdFunction(String tripCompanyCode, Double lat, Double lon) {
+        return findNearestStay(tripCompanyCode, lat, lon).map(Stay::getDirection_id).orElse(null);
+    }
+
+    public String nearestScheduledDirectionFunction(String tripCompanyCode, Double lat, Double lon) {
+        return findNearestStay(tripCompanyCode, lat, lon).map(stay -> {
+            if (stay.getDirection_id() == 0) {
+                return "Forth";
+            } else if (stay.getDirection_id() == 1) {
+                return "Back";
+            } else return null;
+        }).orElse(null);
+    }
+
+    public Integer nearestScheduledStopSequenceFunction(String tripCompanyCode, Double lat, Double lon) {
+        return findNearestStay(tripCompanyCode, lat, lon).map(Stay::getStop_sequence).orElse(null);
+    }
+
+    public String findNearestAndThenNearestButInAnotherDirectionId(String route,
+                                                                   Double lat,
+                                                                   Double lon) {
         if (route == null || lat == null || lon == null) {
             return null;
         }
